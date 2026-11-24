@@ -179,14 +179,18 @@ function standings(n,r,c,ids,R){
   return Object.values(t).sort((a,b)=>b.w-a.w||b.d-a.d||(R[b.id]||0)-(R[a.id]||0));
 }
 function roundDone(n,r){const cs=n['r'+r]||{};return Object.keys(cs).length>0&&Object.keys(cs).every(c=>[1,2,3].every(m=>{const s=S.scores[skey(n.id,r,c,m)];return s&&valid(s.sa,s.sb)}))}
-function confirmed(nid){return Object.values(S.rsvp).filter(x=>x.night===nid&&S.players[x.player]&&S.players[x.player].active!==false).sort((a,b)=>a.ts-b.ts)}
+function answers(nid,st){return Object.values(S.rsvp).filter(x=>x.night===nid&&S.players[x.player]&&S.players[x.player].active!==false&&(!st||(x.status||'present')===st)).sort((a,b)=>a.ts-b.ts)}
+const confirmed=nid=>answers(nid,'present');
+// Seuls les présents jouent (ordre de confirmation). Un remplaçant joue seulement si un administrateur confirme sa place.
+function lineup(nid){const P=answers(nid,'present'),Rm=answers(nid,'remplacant'),order=P.map(x=>x.player),play=Math.min(MAXC*4,Math.floor(order.length/4)*4),miss=order.length<MAXC*4&&order.length%4?4-order.length%4:0;return {P,Rm,order,play,miss,inn:new Set(order.slice(0,play))}}
+const PRES=[['present','Je serai là'],['remplacant','Disponible pour remplacer'],['absent','Je serai absent(e)']];
+const presLabel=s=>({present:'Présent',remplacant:'Remplaçant',absent:'Absent'}[s]||'Sans réponse');
 const saveNight=(n,ok)=>act('admin_save_night',{p_night:n},ok);
 
 async function generate(n){
-  const {R}=compute(); const conf=confirmed(n.id).map(x=>x.player);
-  const play=Math.min(MAXC*4,Math.floor(conf.length/4)*4);
+  const {R}=compute(), L=lineup(n.id), play=L.play;
   if(play<4){toast('Il faut au moins 4 joueurs confirmés');return}
-  const inn=conf.slice(0,play).sort((a,b)=>R[b]-R[a]), wait=conf.slice(play), r1={};
+  const inn=L.order.slice(0,play).sort((a,b)=>R[b]-R[a]), wait=L.order.slice(play), r1={};
   for(let c=1;c<=play/4;c++)r1[c]=inn.slice((c-1)*4,c*4);
   curRound=1; await saveNight({...n,status:'r1',r1,r2:{},wait,courts:play/4},'Terrains générés');
 }
@@ -231,21 +235,21 @@ async function disablePush(){
 }
 async function callReminders(type,player){
   try{const r=await fetch(`${SUPABASE_URL}/functions/v1/rappels`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code,type,player})});
-    const j=await r.json(); if(j.error)throw new Error(j.error); toast(`${j.sent} notification(s) envoyée(s)`)}catch(e){toast('Envoi impossible: '+e.message)}
+    const j=await r.json(); if(j.error)throw new Error(j.error); if(type!=='remplacant')toast(`${j.sent} notification(s) envoyée(s)`); return j.sent}catch(e){toast('Envoi impossible: '+e.message);return 0}
 }
 function remindPanel(){
   const me=ls.get('pbme'), on=ls.get('pbpush')&&ls.get('pbpush')===me&&typeof Notification!=='undefined'&&Notification.permission==='granted';
   let t='<div class="panel"><h2>Rappels sur ton téléphone</h2>';
-  if(on)return t+`<p>Les rappels sont activés. Tu recevras une notification le mardi soir, puis le jeudi midi si tu n'as pas encore confirmé.</p><button data-act="pushOff">Désactiver les rappels</button></div>`;
+  if(on)return t+`<p>Les rappels sont activés. Tu recevras une notification le mardi soir, puis le jeudi midi si tu n'as pas encore répondu.</p><button data-act="pushOff">Désactiver les rappels</button></div>`;
   if(isIOS&&!standalone)return t+`<p>Sur iPhone, installe d'abord l'application : ouvre ce site dans <b>Safari</b>, touche le bouton <b>Partager</b> puis <b>Sur l'écran d'accueil</b>. Ouvre ensuite l'application à partir de l'icône et reviens ici.</p></div>`;
   if(!pushOK)return t+`<p class="note">Ce navigateur ne permet pas les notifications. Essaie avec Chrome sur Android ou Safari sur iPhone.</p></div>`;
   return t+`<p>Reçois un rappel pour confirmer ta présence chaque semaine.</p><button class="go" data-act="pushOn"${me?'':' disabled'}>Activer les rappels</button>${me?'':'<p class="note">Choisis d\'abord ton nom dans « Je suis ».</p>'}</div>`;
 }
 function buildRemind(){
   const n=nightsSorted().find(x=>x.status==='inscription'); if(!n){toast('Crée d\'abord la soirée');return ''}
-  const conf=new Set(confirmed(n.id).map(x=>x.player)), miss=Object.entries(S.players).filter(([id,p])=>p.active!==false&&!conf.has(id)).map(([,p])=>p.name).sort((a,b)=>a.localeCompare(b,'fr'));
+  const L=lineup(n.id), miss=Object.entries(S.players).filter(([id,p])=>p.active!==false&&!S.rsvp[n.id+'__'+id]).map(([,p])=>p.name).sort((a,b)=>a.localeCompare(b,'fr'));
   const url=location.origin+location.pathname;
-  return `Pickleball ${fmtDate(n.id)} : confirme ta présence ici ${url} (code de ligue : ${S.league}).\nDéjà ${conf.size} confirmés.${miss.length?`\nPas encore de réponse : ${miss.join(', ')}.`:''}`;
+  return `Pickleball ${fmtDate(n.id)} : indique si tu seras présent, absent ou disponible pour remplacer ici ${url} (code de ligue : ${S.league}).\nDéjà ${L.P.length} confirmés${L.Rm.length?` et ${L.Rm.length} remplaçant(s)`:''}.${miss.length?`\nPas encore de réponse : ${miss.join(', ')}.`:''}`;
 }
 
 // ---------- Vues ----------
@@ -260,8 +264,8 @@ function vSoiree(){
   const {R}=compute(); let h=whoBar()+`<div class="bar"><select id="nightSel" aria-label="Soirée">${ns.map(x=>`<option value="${esc(x.id)}"${x.id===n.id?' selected':''}>${esc(fmtDate(x.id))}</option>`).join('')}</select>`;
   const lab={inscription:'Inscriptions ouvertes',r1:'Ronde 1 en cours',r2:'Ronde 2 en cours',fini:'Soirée terminée'}[n.status];
   h+=`<span class="pill${n.status==='r1'||n.status==='r2'?' live':''}">${lab}</span></div>`;
-  if(n.status==='inscription'){const c=confirmed(n.id).length;
-    return h+`<p class="hero">${c} confirmés</p><p>${Math.min(MAXC,Math.floor(c/4))} terrains possibles${c>32||c%4?`, ${c-Math.min(32,Math.floor(c/4)*4)} en attente`:''}. Confirme ta présence dans l'onglet Présences.</p>`+(S.admin?`<button class="go" data-act="gen">Générer les terrains</button>`:`<p class="note">Ton terrain s'affichera ici quand l'organisateur lancera la soirée.</p>`)}
+  if(n.status==='inscription'){const L=lineup(n.id),c=L.P.length,w=L.order.length-L.play;
+    return h+`<p class="hero">${c} confirmés</p><p>${L.play/4} terrain(s) complet(s)${w?`, ${w} en attente`:''}.${L.miss?` Il manque ${L.miss} joueur(s) pour compléter un terrain de plus.`:''}${L.Rm.length?` ${L.Rm.length} remplaçant(s) disponible(s).`:''} Donne ta réponse dans l'onglet Présences.</p>`+(S.admin?`<button class="go" data-act="gen">Générer les terrains</button>`:`<p class="note">Ton terrain s'affichera ici quand l'organisateur lancera la soirée.</p>`)}
   const r=curRound&&n['r'+curRound]&&Object.keys(n['r'+curRound]).length?curRound:(n.status==='r1'?1:2); curRound=r;
   const cs=n['r'+r]||{}, last=Object.keys(cs).length, mc=myCourt(n,r);
   if(mc)h+=`<div class="mine">${mc==='w'?'Tu es en attente ce soir':`Tu joues au terrain <span class="num">${esc(mc)}</span>`}<small>Ronde ${r}</small></div>`;
@@ -283,6 +287,7 @@ function vSoiree(){
     h+=`<div class="stand">${sd.map((x,i)=>`${i+1}. ${esc(name(x.id))} ${x.w} V, ${x.d>0?'+':''}${x.d}`).join(' · ')}</div></section>`;
   }
   h+='</div>';
+  {const Rm=answers(n.id,'remplacant');if(S.admin&&n.status!=='fini'&&Rm.length)h+=`<div class="panel" style="margin-top:16px"><h2>Remplaçants disponibles</h2><p class="note">Une fois confirmé, le remplaçant passe en attente; échange-le ensuite avec « Déplacer des joueurs ».</p><ul class="list">${Rm.map(x=>`<li><span>${esc(name(x.player))}</span><button class="go" data-act="confSub" data-n="${esc(n.id)}" data-p="${esc(x.player)}">Confirmer sa place</button></li>`).join('')}</ul></div>`}
   if(n.wait?.length)h+=`<div class="panel" style="margin-top:16px"><h2>En attente</h2><div class="ppl" style="padding:0">${n.wait.map((id,i)=>`<div class="chip${swapSel&&swapSel[0]==='w'&&swapSel[1]==i?' sel':''}" data-sw="w:${i}">${esc(name(id))}<small>${Math.round(R[id]||0)}</small></div>`).join('')}</div></div>`;
   if(n.status==='r1')h+=`<p style="margin-top:20px"><button class="go" data-act="r2"${roundDone(n,1)?'':' disabled'}>Passer à la ronde 2</button> <span class="note">${roundDone(n,1)?'Le 1er de chaque terrain monte, le 4e descend.':'Disponible quand tous les pointages de la ronde 1 sont entrés.'}</span></p>`;
   if(n.status==='r2')h+=`<p style="margin-top:20px"><button class="go" data-act="fin"${roundDone(n,2)?'':' disabled'}>Terminer la soirée</button></p>`;
@@ -292,12 +297,18 @@ function vPresences(){
   const n=nightsSorted().find(x=>x.status==='inscription');
   if(!n)return `<p class="hero">Pas d'inscription ouverte</p><p class="note">Les présences ouvrent quand l'organisateur crée la prochaine soirée.</p>`+whoBar()+remindPanel();
   const act=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
-  const mine=ls.get('pbme'), conf=confirmed(n.id), cut=Math.min(32,Math.floor(conf.length/4)*4), isIn=mine&&S.rsvp[n.id+'__'+mine];
+  const mine=ls.get('pbme'), L=lineup(n.id), st=mine&&S.rsvp[n.id+'__'+mine]?.status;
+  const ab=answers(n.id,'absent'), none=act.filter(([id])=>!S.rsvp[n.id+'__'+id]);
   let h=`<h2 style="font-size:32px;margin:0 0 6px">${esc(fmtDate(n.id))}</h2><div class="panel">`+whoBar();
-  if(mine&&S.players[mine])h+=isIn?`<button class="warn" data-act="rsvp" data-p="${esc(mine)}">Annuler ma présence</button>`:`<button class="go" data-act="rsvp" data-p="${esc(mine)}">Je serai là</button>`;
-  h+=`<p class="note">Places attribuées dans l'ordre de confirmation; au-delà des terrains complets, on est en attente.</p></div>`+remindPanel();
-  h+=`<h2>${conf.length} confirmés</h2><ol class="list">${conf.map((x,i)=>`<li><span>${i+1}. ${esc(name(x.player))}</span><span class="pill">${i<cut?'Joue':'En attente'}</span></li>`).join('')}</ol>`;
-  if(S.admin)h+=`<div class="panel" style="margin-top:16px"><h2>Pointer pour un joueur</h2><div class="ppl" style="padding:0">${act.map(([id,p])=>`<button data-act="rsvp" data-p="${esc(id)}" class="${S.rsvp[n.id+'__'+id]?'go':''}">${esc(p.name)}</button>`).join('')}</div></div>`;
+  if(mine&&S.players[mine])h+=`<div class="row">${PRES.map(([k,l])=>`<button data-act="pres" data-s="${k}" data-p="${esc(mine)}" class="${st===k?'go':''}">${st===k?'✓ ':''}${l}</button>`).join('')}</div>${st?`<p style="margin:10px 0 0"><button data-act="pres" data-s="" data-p="${esc(mine)}">Effacer ma réponse</button></p>`:''}`;
+  if(st==='remplacant')h+=`<p style="margin:10px 0 0"><b>Tu es en réserve.</b> Si un administrateur confirme ta place, tu recevras une notification et ton nom passera dans les confirmés.</p>`;
+  h+=`<p class="note">Les présents ont les places dans l'ordre de confirmation. Un remplaçant joue seulement si un administrateur confirme sa place.</p></div>`+remindPanel();
+  if(L.miss)h+=`<p class="pill live" style="margin:14px 0 0">Il manque ${L.miss} joueur(s) pour compléter le terrain ${L.play/4+1}</p>`;
+  h+=`<h2>${L.P.length} confirmés</h2><ol class="list">${L.P.map((x,i)=>`<li><span>${i+1}. ${esc(name(x.player))}${x.sub_confirmed?' <small class="note">(remplaçant)</small>':''}</span><span class="pill">${L.inn.has(x.player)?'Joue':'En attente'}</span></li>`).join('')}</ol>`;
+  if(L.Rm.length)h+=`<h2>${L.Rm.length} remplaçant(s) disponible(s)</h2><ol class="list">${L.Rm.map((x,i)=>`<li><span>${i+1}. ${esc(name(x.player))}</span>${S.admin?`<button class="go" data-act="confSub" data-n="${esc(n.id)}" data-p="${esc(x.player)}">Confirmer sa place</button>`:'<span class="pill">En réserve</span>'}</li>`).join('')}</ol>`;
+  if(ab.length)h+=`<h2>${ab.length} absent(s)</h2><p>${ab.map(x=>esc(name(x.player))).join(', ')}</p>`;
+  if(S.admin&&none.length)h+=`<h2>${none.length} sans réponse</h2><p>${none.map(([,p])=>esc(p.name)).join(', ')}</p>`;
+  if(S.admin)h+=`<div class="panel" style="margin-top:16px"><h2>Pointer pour un joueur</h2><p class="note">Touche un nom pour passer de Sans réponse à Présent, Remplaçant, Absent, puis Sans réponse.</p><div class="ppl" style="padding:0">${act.map(([id,p])=>{const s=S.rsvp[n.id+'__'+id]?.status;return `<button data-act="cyc" data-p="${esc(id)}" class="${s==='present'?'go':''}">${esc(p.name)}<br><small>${presLabel(s)}</small></button>`}).join('')}</div></div>`;
   return h;
 }
 function vClassement(){
@@ -362,7 +373,12 @@ document.addEventListener('click',async e=>{
   if(a==='ed'){drafts[b.dataset.k]={...(drafts[b.dataset.k]||{}),open:true};render()}
   if(a==='r2'&&await ask('Passer à la ronde 2? Le 1er de chaque terrain monte, le 4e descend.'))await toRound2(n);
   if(a==='fin'&&await ask('Terminer la soirée? Les cotes seront à jour dans le classement.'))await act('advance',{p_night:n.id,p_status:'fini',p_r2:{}},'Soirée terminée');
-  if(a==='rsvp'){const ni=nightsSorted().find(x=>x.status==='inscription'),on=!S.rsvp[ni.id+'__'+b.dataset.p];await act('set_rsvp',{p_night:ni.id,p_player:b.dataset.p,p_on:on},on?'Présence confirmée':'Présence annulée')}
+  if(a==='confSub'){const p=b.dataset.p;if(!await ask(`Confirmer la place de ${name(p)}? Une notification lui sera envoyée.`))return;
+    if(busy)return;busy=true;let ok=false;try{await rpc('confirm_sub',{p_code:code,p_night:b.dataset.n,p_player:p});ok=true}catch(e){toast(e.message)}finally{busy=false}
+    if(ok){const sent=await callReminders('remplacant',p);toast(sent?`Place confirmée, ${name(p)} a été avisé(e)`:`Place confirmée. ${name(p)} n'a pas activé les rappels : avise-le par Messenger.`);await load()}}
+  if(a==='pres'||a==='cyc'){const ni=nightsSorted().find(x=>x.status==='inscription');if(!ni)return;const cur=S.rsvp[ni.id+'__'+b.dataset.p]?.status||'';
+    const s=a==='pres'?b.dataset.s:({'':'present',present:'remplacant',remplacant:'absent',absent:''}[cur]);if(a==='pres'&&s===cur)return;
+    await act('set_presence',{p_night:ni.id,p_player:b.dataset.p,p_status:s||null},s?presLabel(s)+' : réponse enregistrée':'Réponse effacée')}
   if(a==='newNight'){const d=$('newDate').value;if(!d)return;if(S.nights[d]){toast('Cette soirée existe déjà');return}curNight=d;await saveNight({id:d,status:'inscription',r1:{},r2:{},wait:[],courts:0},'Soirée créée')}
   if(a==='delNight'&&await ask('Supprimer cette soirée et ses pointages? Les cotes seront recalculées.')){curNight=null;await act('admin_delete_night',{p_id:b.dataset.n},'Soirée supprimée')}
   if(a==='saveLeague'){await act('admin_set_league_code',{p_new:$('leagueSet').value},'Code de ligue changé')}
