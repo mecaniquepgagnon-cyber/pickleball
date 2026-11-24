@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="fr-CA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ligue pickleball du jeudi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/*
+VOICE: tableau de marque de club sportif, net et rapide sur un téléphone au bord du terrain
+IDEA: la feuille de pointage affichée au mur du gymnase, un bloc par terrain
+PICTURE: les cartes de terrain elles-mêmes, bleu court, lignes blanches, balle jaune optique
+COLOUR and TYPE: bleu court #1d4f91 dominant, blanc, jaune balle #d6ee3a en accent, corail pour descendre; Barlow Condensed + Barlow
+LAYOUT: bande bleue avec titre et onglets, puis une colonne de terrains; deux colonnes au-dessus de 900px
+*/
+:root{color-scheme:light dark;--bg:light-dark(#ffffff,#0c1522);--ink:light-dark(#0f1b2b,#e8eef6);--mute:light-dark(#5a6878,#9fb0c4);--line:light-dark(#dfe6ee,#22344b);--card:light-dark(#f4f7fb,#132235);--court:#1d4f91;--court2:#163e74;--ball:#d6ee3a;--down:#e4572e;--up:#2f9e5b}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Barlow,system-ui,sans-serif;overflow-x:clip}
+h1,h2,h3,.num{font-family:"Barlow Condensed",Barlow,sans-serif;font-weight:700;line-height:1.05}
+header{background:var(--court);color:#fff;padding:20px max(5vw,16px) 0}
+header h1{margin:0;font-size:clamp(30px,6vw,44px);text-wrap:balance}
+header p{margin:4px 0 14px;color:#c9d8ee}
+nav{display:flex;gap:4px;overflow-x:auto}
+nav a{flex:none;color:#dfe9f7;text-decoration:none;padding:10px 16px;border-radius:10px 10px 0 0;font-weight:600;min-height:44px}
+nav a.on{background:var(--bg);color:var(--ink)}
+main{padding:20px max(5vw,16px) 60px;max-width:1240px;margin:0 auto}
+.note{color:var(--mute);font-size:14px}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 16px}
+.pill{display:inline-block;padding:3px 10px;border-radius:99px;background:var(--card);border:1px solid var(--line);font-size:14px;font-weight:600}
+.pill.live{background:var(--ball);color:#1b2a05;border-color:transparent}
+button,select,input{font:inherit;font-size:16px}
+button{min-height:44px;padding:8px 16px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:600;cursor:pointer}
+button.go{background:var(--court);color:#fff;border-color:var(--court)}
+button.warn{color:var(--down)}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,input:focus-visible,select:focus-visible,nav a:focus-visible{outline:3px solid var(--ball);outline-offset:2px}
+input,select{min-height:44px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.courts{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
+@media(min-width:900px){.courts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.court{border-radius:16px;overflow:hidden;border:1px solid var(--line);background:var(--card)}
+.court>h3{margin:0;background:var(--court2);color:#fff;padding:10px 14px;font-size:24px;display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #fff}
+.court>h3 span{font-size:15px;font-family:Barlow;font-weight:500;color:#c9d8ee}
+.ppl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:10px}
+.chip{display:flex;justify-content:space-between;gap:6px;padding:8px 10px;border-radius:10px;background:var(--bg);border:1px solid var(--line);font-weight:600;cursor:default}
+.chip small{color:var(--mute);font-weight:500;white-space:nowrap}
+.chip.sel{outline:3px solid var(--ball)}
+.chip.up{border-left:5px solid var(--up)}.chip.down{border-left:5px solid var(--down)}
+.swap .chip{cursor:pointer}
+.match{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid var(--line)}
+.teams{font-size:15px}.teams b{font-weight:600}.vs{color:var(--mute);padding:0 4px}
+.sc{display:flex;gap:6px;align-items:center}
+.sc input{width:58px;text-align:center}
+.done{font-family:"Barlow Condensed";font-size:26px;white-space:nowrap}
+.done .w{color:var(--up)}
+.stand{padding:8px 14px 12px;border-top:1px solid var(--line);font-size:14px;color:var(--mute)}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left}
+th{font-size:14px;color:var(--mute);font-weight:600}
+td.r,th.r{text-align:right;white-space:nowrap}
+.big{font-family:"Barlow Condensed";font-size:22px}
+.plus{color:var(--up)}.minus{color:var(--down)}
+.panel{border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:16px;background:var(--card)}
+.panel h2{margin:0 0 10px;font-size:26px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+textarea{width:100%;min-height:140px;font:16px/1.4 Barlow,sans-serif;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.list li{padding:8px 0;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px}
+.list{list-style:none;margin:0;padding:0}
+.hero{font-family:"Barlow Condensed";font-size:clamp(40px,10vw,64px);color:var(--court)}
+:root[data-theme=dark] .hero{color:var(--ball)}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .hero{color:var(--ball)}}
+dialog{border:1px solid var(--line);border-radius:16px;background:var(--bg);color:var(--ink);max-width:420px;width:calc(100% - 32px)}
+dialog::backdrop{background:rgb(0 0 0/.45)}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.on{opacity:1}
+@media(prefers-reduced-motion:reduce){.toast{transition:none}}
+.mine{display:flex;justify-content:space-between;align-items:baseline;gap:10px;background:var(--ball);color:#1b2a05;border-radius:16px;padding:14px 18px;margin:0 0 16px;font-family:"Barlow Condensed";font-size:clamp(26px,6vw,36px);font-weight:700}
+.mine .num{font-size:1.3em}.mine small{font-family:Barlow;font-size:15px;font-weight:600}
+.court.me{outline:4px solid var(--ball);outline-offset:-1px}
+tr.meRow td{background:color-mix(in srgb,var(--ball) 25%,transparent)}
+#logout{float:right;background:transparent;color:#dfe9f7;border-color:#4d77b3;min-height:36px;padding:4px 12px;font-size:14px}
+@media(max-width:600px){table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:8em;text-align:start}.stack td::before{content:attr(data-l);float:inline-start;width:7.5em;margin-inline-start:-8em;white-space:normal}.stack td:empty{display:none}.match{grid-template-columns:minmax(0,1fr)}}
+</style>
+<script>new MutationObserver(()=>{for(const c of document.querySelectorAll('.stack td:not([data-l])')){let i=0,p=c;while(p=p.previousElementSibling)i+=p.colSpan;c.dataset.l=c.closest('table').rows[0].cells[i]?.textContent||''}}).observe(document,{childList:true,subtree:true})</script>
+</head>
+<body>
+<header>
+  <button id="logout" hidden>Changer de code</button>
+  <h1>Ligue de pickleball du jeudi</h1>
+  <p id="sub">Chargement…</p>
+  <nav id="nav">
+    <a href="#soiree" data-v="soiree">Soirée</a>
+    <a href="#presences" data-v="presences">Présences</a>
+    <a href="#classement" data-v="classement">Classement</a>
+    <a href="#admin" data-v="admin" id="navAdmin" hidden>Admin</a>
+  </nav>
+</header>
+<main id="app"><p class="note">Chargement…</p></main>
+<dialog id="dlg"><p id="dlgTxt"></p><div class="row"><button id="dlgNo">Annuler</button><button class="go" id="dlgYes">Confirmer</button></div></dialog>
+<div class="toast" id="toast"></div>
+<script>
+{
+// ====== À REMPLIR : Supabase > Project Settings > API ======
+const SUPABASE_URL='https://vggxacxynhcoivnjianm.supabase.co';
+const SUPABASE_ANON_KEY='sb_publishable__B18jqGV1T3DIOVk_HVqzw_x7l0igGw';
+// ===========================================================
+const K=16, MAXC=8, SEED_TOP=1700, SEED_BOT=1300;
+const S={players:{},nights:{},rsvp:{},scores:{},admin:false,league:'',ready:0};
+let code=null, view='soiree', curNight=null, curRound=null, swapMode=false, swapSel=null, busy=false;
+const drafts={};
+const $=id=>document.getElementById(id);
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ls={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}}};
+function toast(t){const e=$('toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('on'),2600)}
+function ask(txt){return new Promise(res=>{const d=$('dlg');$('dlgTxt').textContent=txt;d.showModal();$('dlgYes').onclick=()=>{d.close();res(true)};$('dlgNo').onclick=()=>{d.close();res(false)}})}
+const fmtDate=id=>{const [y,m,d]=id.split('-').map(Number);return new Date(y,m-1,d).toLocaleDateString('fr-CA',{weekday:'long',day:'numeric',month:'long'})};
+function nextThursday(){const d=new Date();d.setDate(d.getDate()+((4-d.getDay()+7)%7));const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`}
+const name=id=>S.players[id]?.name||'Joueur retiré';
+
+// ---------- Supabase ----------
+async function rpc(fn,args){
+  const r=await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`,{method:'POST',headers:{'Content-Type':'application/json',apikey:SUPABASE_ANON_KEY,...(SUPABASE_ANON_KEY.startsWith('eyJ')?{Authorization:'Bearer '+SUPABASE_ANON_KEY}:{})},body:JSON.stringify(args)});
+  const t=await r.text(); let j=null; try{j=t?JSON.parse(t):null}catch(e){}
+  if(!r.ok)throw new Error(j?.message||'Erreur réseau');
+  return j;
+}
+async function load(){
+  if(!code)return;
+  try{
+    const st=await rpc('get_state',{p_code:code});
+    S.admin=!!st.admin; S.league=st.league_code||'';
+    S.players=Object.fromEntries(st.players.map(p=>[p.id,p]));
+    S.nights=Object.fromEntries(st.nights.map(n=>[n.id,n]));
+    S.rsvp=Object.fromEntries(st.rsvp.map(r=>[r.night+'__'+r.player,r]));
+    S.scores=Object.fromEntries(st.scores.map(s=>[s.id,s]));
+    S.ready=1; render();
+  }catch(e){
+    if(/Code invalide/.test(e.message)){code=null;ls.set('pbcode',null);S.ready=0;render();toast('Code de ligue invalide')}
+    else if(!S.ready){$('app').innerHTML='<p class="note">Impossible de joindre la ligue pour l\'instant. Vérifie ta connexion.</p>'}
+  }
+}
+async function act(fn,args,ok){if(busy)return;busy=true;try{await rpc(fn,{p_code:code,...args});if(ok)toast(ok);await load()}catch(e){toast(e.message)}finally{busy=false}}
+
+// ---------- Cote Elo ----------
+function compute(){
+  const R={},st={};
+  for(const [id,p] of Object.entries(S.players)){R[id]=Number(p.seed)||1500;st[id]={w:0,l:0,pf:0,pa:0,nights:new Set(),last:0,lastNight:null}}
+  const list=Object.values(S.scores).filter(s=>S.nights[s.night]&&valid(s.sa,s.sb)).sort((a,b)=>a.night.localeCompare(b.night)||a.round-b.round||a.court-b.court||a.m-b.m);
+  for(const s of list){
+    const A=s.a.filter(x=>R[x]!=null),B=s.b.filter(x=>R[x]!=null); if(!A.length||!B.length)continue;
+    const ra=A.reduce((t,x)=>t+R[x],0)/A.length, rb=B.reduce((t,x)=>t+R[x],0)/B.length;
+    const ea=1/(1+10**((rb-ra)/400)), sa=s.sa>s.sb?1:0, mg=Math.abs(s.sa-s.sb);
+    const M=0.6+0.4*Math.log(mg+1)/Math.log(11), d=K*M*(sa-ea);
+    const apply=(ids,dd,pf,pa,win)=>ids.forEach(x=>{R[x]+=dd;const t=st[x];t.pf+=pf;t.pa+=pa;win?t.w++:t.l++;t.nights.add(s.night);if(t.lastNight!==s.night){t.lastNight=s.night;t.last=0}t.last+=dd});
+    apply(A,d,s.sa,s.sb,sa===1);apply(B,-d,s.sb,s.sa,sa===0);
+  }
+  for(const id in R)R[id]+=Number(S.players[id].adj)||0;
+  return {R,st};
+}
+const valid=(a,b)=>Number.isInteger(a)&&Number.isInteger(b)&&Math.max(a,b)===21&&Math.min(a,b)>=0&&Math.min(a,b)<21;
+
+// ---------- Soirées ----------
+const nightsSorted=()=>Object.values(S.nights).sort((a,b)=>b.id.localeCompare(a.id));
+const pairs=p=>[[[p[0],p[3]],[p[1],p[2]]],[[p[0],p[2]],[p[1],p[3]]],[[p[0],p[1]],[p[2],p[3]]]];
+const skey=(n,r,c,m)=>`${n}__r${r}__c${c}__m${m}`;
+function standings(n,r,c,ids,R){
+  const t=Object.fromEntries(ids.map(x=>[x,{id:x,w:0,d:0}]));
+  for(let m=1;m<=3;m++){const s=S.scores[skey(n,r,c,m)];if(!s||!valid(s.sa,s.sb))continue;
+    s.a.forEach(x=>{if(t[x]){t[x].d+=s.sa-s.sb;if(s.sa>s.sb)t[x].w++}});s.b.forEach(x=>{if(t[x]){t[x].d+=s.sb-s.sa;if(s.sb>s.sa)t[x].w++}})}
+  return Object.values(t).sort((a,b)=>b.w-a.w||b.d-a.d||(R[b.id]||0)-(R[a.id]||0));
+}
+function roundDone(n,r){const cs=n['r'+r]||{};return Object.keys(cs).length>0&&Object.keys(cs).every(c=>[1,2,3].every(m=>{const s=S.scores[skey(n.id,r,c,m)];return s&&valid(s.sa,s.sb)}))}
+function confirmed(nid){return Object.values(S.rsvp).filter(x=>x.night===nid&&S.players[x.player]&&S.players[x.player].active!==false).sort((a,b)=>a.ts-b.ts)}
+const saveNight=(n,ok)=>act('admin_save_night',{p_night:n},ok);
+
+async function generate(n){
+  const {R}=compute(); const conf=confirmed(n.id).map(x=>x.player);
+  const play=Math.min(MAXC*4,Math.floor(conf.length/4)*4);
+  if(play<4){toast('Il faut au moins 4 joueurs confirmés');return}
+  const inn=conf.slice(0,play).sort((a,b)=>R[b]-R[a]), wait=conf.slice(play), r1={};
+  for(let c=1;c<=play/4;c++)r1[c]=inn.slice((c-1)*4,c*4);
+  curRound=1; await saveNight({...n,status:'r1',r1,r2:{},wait,courts:play/4},'Terrains générés');
+}
+async function toRound2(n){
+  const {R}=compute(), N=n.courts, rk={}, nx={};
+  for(let c=1;c<=N;c++){rk[c]=standings(n.id,1,c,n.r1[c],R).map(x=>x.id);nx[c]=[]}
+  for(let c=1;c<=N;c++){const r=rk[c];nx[c].push(...r.slice(1,r.length-1));nx[c>1?c-1:1].push(r[0]);nx[c<N?c+1:N].push(r[r.length-1])}
+  for(let c=1;c<=N;c++)nx[c].sort((a,b)=>R[b]-R[a]);
+  curRound=2; await act('advance',{p_night:n.id,p_status:'r2',p_r2:nx},'Ronde 2 prête');
+}
+async function saveScore(n,r,c,m,a,b){
+  const k=skey(n.id,r,c,m), sa=parseInt($('sa-'+k).value,10), sb=parseInt($('sb-'+k).value,10);
+  if(!valid(sa,sb)){toast('Pointage invalide: une équipe a 21, l\'autre moins de 21');return}
+  delete drafts[k];
+  await act('save_score',{p_night:n.id,p_round:r,p_court:Number(c),p_m:m,p_a:a,p_b:b,p_sa:sa,p_sb:sb},'Pointage enregistré');
+}
+async function doSwap(n,r,x,y){
+  const g=JSON.parse(JSON.stringify(n)), get=p=>p[0]==='w'?[g.wait,p[1]]:[g['r'+r][p[0]],p[1]];
+  const [la,ia]=get(x),[lb,ib]=get(y);[la[ia],lb[ib]]=[lb[ib],la[ia]];
+  await saveNight(g,'Joueurs échangés');
+}
+function myCourt(n,r){const me=ls.get('pbme');if(!me)return null;const cs=n['r'+r]||{};for(const c in cs)if(cs[c].includes(me))return c;if((n.wait||[]).includes(me))return 'w';return null}
+
+// ---------- Vues ----------
+function vLogin(){return `<div class="panel" style="max-width:460px"><h2>Entrer dans la ligue</h2><p>Entre le code de ligue que l'organisateur t'a donné.</p><form id="login" class="row"><input id="codeIn" autocomplete="off" autocapitalize="characters" aria-label="Code de ligue" style="flex:1"><button class="go">Entrer</button></form></div>`}
+function whoBar(){
+  const act=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
+  return `<div class="row" style="margin-bottom:14px"><label for="meSel">Je suis</label><select id="meSel"><option value="">Choisis ton nom</option>${act.map(([id,p])=>`<option value="${esc(id)}"${id===ls.get('pbme')?' selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`;
+}
+function vSoiree(){
+  const ns=nightsSorted(); if(!ns.length)return `<p class="hero">Aucune soirée</p><p>${S.admin?'Crée la première soirée dans l\'onglet Admin.':'L\'organisateur n\'a pas encore créé de soirée.'}</p>`;
+  const n=S.nights[curNight]||ns[0]; curNight=n.id;
+  const {R}=compute(); let h=whoBar()+`<div class="bar"><select id="nightSel" aria-label="Soirée">${ns.map(x=>`<option value="${esc(x.id)}"${x.id===n.id?' selected':''}>${esc(fmtDate(x.id))}</option>`).join('')}</select>`;
+  const lab={inscription:'Inscriptions ouvertes',r1:'Ronde 1 en cours',r2:'Ronde 2 en cours',fini:'Soirée terminée'}[n.status];
+  h+=`<span class="pill${n.status==='r1'||n.status==='r2'?' live':''}">${lab}</span></div>`;
+  if(n.status==='inscription'){const c=confirmed(n.id).length;
+    return h+`<p class="hero">${c} confirmés</p><p>${Math.min(MAXC,Math.floor(c/4))} terrains possibles${c>32||c%4?`, ${c-Math.min(32,Math.floor(c/4)*4)} en attente`:''}. Confirme ta présence dans l'onglet Présences.</p>`+(S.admin?`<button class="go" data-act="gen">Générer les terrains</button>`:`<p class="note">Ton terrain s'affichera ici quand l'organisateur lancera la soirée.</p>`)}
+  const r=curRound&&n['r'+curRound]&&Object.keys(n['r'+curRound]).length?curRound:(n.status==='r1'?1:2); curRound=r;
+  const cs=n['r'+r]||{}, last=Object.keys(cs).length, mc=myCourt(n,r);
+  if(mc)h+=`<div class="mine">${mc==='w'?'Tu es en attente ce soir':`Tu joues au terrain <span class="num">${esc(mc)}</span>`}<small>Ronde ${r}</small></div>`;
+  h+=`<div class="bar"><button data-act="rd" data-r="1" class="${r===1?'go':''}">Ronde 1</button><button data-act="rd" data-r="2" class="${r===2?'go':''}"${Object.keys(n.r2||{}).length?'':' disabled'}>Ronde 2</button>`;
+  if(S.admin&&n.status!=='fini')h+=`<button data-act="swap"${swapMode?' class="go"':''}>${swapMode?'Terminer les échanges':'Déplacer des joueurs'}</button>`;
+  h+='</div>';
+  if(swapMode)h+=`<p class="note">Touche un joueur, puis un autre (ou un remplaçant) pour les échanger.</p>`;
+  h+=`<div class="courts${swapMode?' swap':''}">`;
+  const order=Object.keys(cs).sort((a,b)=>a-b); if(mc&&mc!=='w')order.sort((a,b)=>(b===mc)-(a===mc));
+  for(const c of order){
+    const p=cs[c], sd=standings(n.id,r,c,p,R), complete=[1,2,3].every(m=>{const s=S.scores[skey(n.id,r,c,m)];return s&&valid(s.sa,s.sb)});
+    const pos=id=>sd.findIndex(x=>x.id===id);
+    h+=`<section class="court${c===mc?' me':''}"><h3>Terrain ${esc(c)}<span>${complete?'Terminé':'En jeu'}</span></h3><div class="ppl">${p.map((id,i)=>{const k=pos(id),cls=r===1&&complete?(k===0&&c>1?' up':k===3&&c<last?' down':''):'';return `<div class="chip${cls}${swapSel&&swapSel[0]==c&&swapSel[1]==i?' sel':''}" data-sw="${esc(c)}:${i}">${esc(name(id))}<small>${Math.round(R[id]||0)}</small></div>`}).join('')}</div>`;
+    pairs(p).forEach(([a,b],i)=>{const m=i+1,k=skey(n.id,r,c,m),s=S.scores[k],ok=s&&valid(s.sa,s.sb),edit=n.status==='r'+r||S.admin;
+      const t=`<div class="teams"><b>${esc(name(a[0]))}</b> et <b>${esc(name(a[1]))}</b><span class="vs">contre</span><b>${esc(name(b[0]))}</b> et <b>${esc(name(b[1]))}</b></div>`;
+      if(ok&&!drafts[k]?.open)h+=`<div class="match">${t}<div class="sc"><span class="done"><span class="${s.sa>s.sb?'w':''}">${s.sa}</span>-<span class="${s.sb>s.sa?'w':''}">${s.sb}</span></span>${edit?`<button data-act="ed" data-k="${k}">Corriger</button>`:''}</div></div>`;
+      else if(edit){const d=drafts[k]||{sa:ok?s.sa:'',sb:ok?s.sb:''};h+=`<div class="match">${t}<div class="sc"><input id="sa-${k}" data-k="${k}" data-f="sa" inputmode="numeric" maxlength="2" value="${esc(d.sa??'')}" aria-label="Pointage équipe 1"><input id="sb-${k}" data-k="${k}" data-f="sb" inputmode="numeric" maxlength="2" value="${esc(d.sb??'')}" aria-label="Pointage équipe 2"><button class="go" data-act="sv" data-c="${esc(c)}" data-m="${m}" data-r="${r}">OK</button></div></div>`}
+      else h+=`<div class="match">${t}<span class="note">À jouer</span></div>`});
+    h+=`<div class="stand">${sd.map((x,i)=>`${i+1}. ${esc(name(x.id))} ${x.w} V, ${x.d>0?'+':''}${x.d}`).join(' · ')}</div></section>`;
+  }
+  h+='</div>';
+  if(n.wait?.length)h+=`<div class="panel" style="margin-top:16px"><h2>En attente</h2><div class="ppl" style="padding:0">${n.wait.map((id,i)=>`<div class="chip${swapSel&&swapSel[0]==='w'&&swapSel[1]==i?' sel':''}" data-sw="w:${i}">${esc(name(id))}<small>${Math.round(R[id]||0)}</small></div>`).join('')}</div></div>`;
+  if(n.status==='r1')h+=`<p style="margin-top:20px"><button class="go" data-act="r2"${roundDone(n,1)?'':' disabled'}>Passer à la ronde 2</button> <span class="note">${roundDone(n,1)?'Le 1er de chaque terrain monte, le 4e descend.':'Disponible quand tous les pointages de la ronde 1 sont entrés.'}</span></p>`;
+  if(n.status==='r2')h+=`<p style="margin-top:20px"><button class="go" data-act="fin"${roundDone(n,2)?'':' disabled'}>Terminer la soirée</button></p>`;
+  return h;
+}
+function vPresences(){
+  const n=nightsSorted().find(x=>x.status==='inscription');
+  if(!n)return `<p class="hero">Pas d'inscription ouverte</p><p class="note">Les présences ouvrent quand l'organisateur crée la prochaine soirée.</p>`;
+  const act=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
+  const mine=ls.get('pbme'), conf=confirmed(n.id), cut=Math.min(32,Math.floor(conf.length/4)*4), isIn=mine&&S.rsvp[n.id+'__'+mine];
+  let h=`<h2 style="font-size:32px;margin:0 0 6px">${esc(fmtDate(n.id))}</h2><div class="panel">`+whoBar();
+  if(mine&&S.players[mine])h+=isIn?`<button class="warn" data-act="rsvp" data-p="${esc(mine)}">Annuler ma présence</button>`:`<button class="go" data-act="rsvp" data-p="${esc(mine)}">Je serai là</button>`;
+  h+=`<p class="note">Places attribuées dans l'ordre de confirmation; au-delà des terrains complets, on est en attente.</p></div>`;
+  h+=`<h2>${conf.length} confirmés</h2><ol class="list">${conf.map((x,i)=>`<li><span>${i+1}. ${esc(name(x.player))}</span><span class="pill">${i<cut?'Joue':'En attente'}</span></li>`).join('')}</ol>`;
+  if(S.admin)h+=`<div class="panel" style="margin-top:16px"><h2>Pointer pour un joueur</h2><div class="ppl" style="padding:0">${act.map(([id,p])=>`<button data-act="rsvp" data-p="${esc(id)}" class="${S.rsvp[n.id+'__'+id]?'go':''}">${esc(p.name)}</button>`).join('')}</div></div>`;
+  return h;
+}
+function vClassement(){
+  const {R,st}=compute(), rows=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>R[b[0]]-R[a[0]]);
+  if(!rows.length)return `<p class="hero">Aucun joueur</p><p class="note">La liste des joueurs sera chargée par l'organisateur.</p>`;
+  return `<p class="note">Cote Elo: une victoire contre plus fort rapporte plus, un gros écart ajoute un bonus. Une absence ne change pas la cote.</p><table class="stack"><thead><tr><th>#</th><th>Joueur</th><th class="r">Cote</th><th class="r">Dernière soirée</th><th class="r">V-D</th><th class="r">Diff.</th><th class="r">Soirées</th></tr></thead><tbody>${rows.map(([id,p],i)=>{const t=st[id],d=Math.round(t.last),df=t.pf-t.pa;return `<tr${id===ls.get('pbme')?' class="meRow"':''}><td>${i+1}</td><td><b>${esc(p.name)}</b></td><td class="r big">${Math.round(R[id])}</td><td class="r ${d>0?'plus':d<0?'minus':''}">${t.lastNight?(d>0?'+':'')+d:''}</td><td class="r">${t.w}-${t.l}</td><td class="r">${df>0?'+':''}${df}</td><td class="r">${t.nights.size}</td></tr>`}).join('')}</tbody></table>`;
+}
+function vAdmin(){
+  if(!S.admin)return `<p>Section réservée à l'organisateur.</p>`;
+  const {R}=compute(), ps=Object.entries(S.players).sort((a,b)=>R[b[0]]-R[a[0]]), ns=nightsSorted();
+  const low=ps.filter(([,p])=>p.active!==false).reduce((m,[id])=>Math.min(m,R[id]),Infinity);
+  return `<div class="panel"><h2>Soirées</h2><div class="row"><input type="date" id="newDate" value="${nextThursday()}" aria-label="Date"><button class="go" data-act="newNight">Créer la soirée</button></div>
+  <ul class="list" style="margin-top:10px">${ns.map(n=>`<li><span>${esc(fmtDate(n.id))}</span><span class="row"><select data-act="status" data-n="${esc(n.id)}" aria-label="Statut">${['inscription','r1','r2','fini'].map(s=>`<option value="${s}"${n.status===s?' selected':''}>${{inscription:'Inscription',r1:'Ronde 1',r2:'Ronde 2',fini:'Terminée'}[s]}</option>`).join('')}</select><button class="warn" data-act="delNight" data-n="${esc(n.id)}">Supprimer</button></span></li>`).join('')}</ul></div>
+  <div class="panel"><h2>Code de ligue</h2><div class="row"><input id="leagueSet" value="${esc(S.league)}" autocomplete="off" style="width:180px" aria-label="Code de ligue"><button class="go" data-act="saveLeague">Changer</button></div><p class="note">C'est le code à donner aux joueurs. Ton code administrateur reste secret; il se change dans Supabase.</p></div>
+  <div class="panel"><h2>Ajouter un joueur</h2><div class="row"><input id="newName" placeholder="Nom" aria-label="Nom"><input id="newSeed" inputmode="numeric" style="width:100px" value="${isFinite(low)?Math.round(low):1500}" aria-label="Cote de départ"><button class="go" data-act="addP">Ajouter</button></div><p class="note">Par défaut, la cote du dernier joueur actif: il commence au dernier terrain.</p></div>
+  <div class="panel"><h2>Charger le classement initial</h2><textarea id="bulk" placeholder="Un nom par ligne, du 1er au dernier"></textarea><p class="note">Cotes de départ échelonnées de ${SEED_TOP} (1er) à ${SEED_BOT} (dernier). Un nom déjà présent voit sa cote de départ remplacée.</p><button class="go" data-act="bulk">Charger</button></div>
+  <div class="panel"><h2>Joueurs (${ps.length})</h2><table class="stack"><thead><tr><th>Nom</th><th class="r">Départ</th><th class="r">Ajust.</th><th class="r">Cote</th><th>Actif</th><th></th></tr></thead><tbody>${ps.map(([id,p])=>`<tr><td><input data-pf="name" data-id="${esc(id)}" value="${esc(p.name)}" aria-label="Nom"></td><td class="r"><input data-pf="seed" data-id="${esc(id)}" value="${esc(p.seed)}" inputmode="numeric" style="width:80px" aria-label="Cote de départ"></td><td class="r"><input data-pf="adj" data-id="${esc(id)}" value="${esc(p.adj||0)}" inputmode="numeric" style="width:70px" aria-label="Ajustement"></td><td class="r big">${Math.round(R[id])}</td><td><input type="checkbox" data-pf="active" data-id="${esc(id)}"${p.active!==false?' checked':''} aria-label="Actif" style="min-height:24px;width:24px"></td><td><button class="warn" data-act="delP" data-id="${esc(id)}">Retirer</button></td></tr>`).join('')}</tbody></table></div>`;
+}
+function render(){
+  const f=document.activeElement, fid=f&&f.id, sel=f&&f.selectionStart;
+  for(const a of document.querySelectorAll('nav a'))a.classList.toggle('on',a.dataset.v===view);
+  $('navAdmin').hidden=!S.admin; $('nav').hidden=!code; $('logout').hidden=!code;
+  const n=nightsSorted()[0]; $('sub').textContent=code&&n?`Dernière soirée: ${fmtDate(n.id)}`:'8 terrains, montée et descente, cote Elo';
+  if(!code){$('app').innerHTML=vLogin();return}
+  if(!S.ready){$('app').innerHTML='<p class="note">Chargement de la ligue…</p>';return}
+  $('app').innerHTML={soiree:vSoiree,presences:vPresences,classement:vClassement,admin:vAdmin}[view]();
+  if(fid&&$(fid)){const e=$(fid);e.focus();try{e.setSelectionRange(sel,sel)}catch(x){}}
+}
+
+// ---------- Événements ----------
+document.addEventListener('submit',async e=>{if(e.target.id!=='login')return;e.preventDefault();const v=$('codeIn').value.trim();if(!v)return;code=v;ls.set('pbcode',v);S.ready=0;render();await load()});
+document.addEventListener('input',e=>{const t=e.target;if(t.dataset.k&&t.dataset.f){drafts[t.dataset.k]={...(drafts[t.dataset.k]||{}),[t.dataset.f]:t.value,open:true}}});
+document.addEventListener('change',async e=>{const t=e.target;
+  if(t.id==='nightSel'){curNight=t.value;curRound=null;swapMode=false;render()}
+  if(t.id==='meSel'){ls.set('pbme',t.value||null);render()}
+  if(t.dataset.act==='status'){const n=S.nights[t.dataset.n];if(n)await saveNight({...n,status:t.value},'Statut changé')}
+  if(t.dataset.pf){const id=t.dataset.id,p={...S.players[id]};if(!S.players[id])return;let v=t.type==='checkbox'?t.checked:t.value.trim();
+    if(t.dataset.pf==='seed'||t.dataset.pf==='adj'){v=Number(v);if(!isFinite(v)){toast('Nombre invalide');return}}
+    if(t.dataset.pf==='name'&&!v)return; p[t.dataset.pf]=v;
+    await act('admin_upsert_player',{p_id:id,p_name:p.name,p_seed:Number(p.seed),p_adj:Number(p.adj)||0,p_active:p.active!==false},'Enregistré')}
+});
+document.addEventListener('click',async e=>{
+  if(e.target.id==='logout'){code=null;ls.set('pbcode',null);S.ready=0;S.admin=false;render();return}
+  const chip=e.target.closest('[data-sw]');
+  if(chip&&swapMode){const [a,b]=chip.dataset.sw.split(':'),p=[a,Number(b)],n=S.nights[curNight];
+    if(!swapSel){swapSel=p;render();return} const x=swapSel;swapSel=null;
+    if(x[0]===p[0]&&x[1]===p[1]){render();return} await doSwap(n,curRound,x,p); return}
+  const b=e.target.closest('[data-act]');if(!b||b.tagName==='SELECT')return;const a=b.dataset.act,n=S.nights[curNight];
+  if(a==='gen'&&await ask('Générer les terrains avec les joueurs confirmés? Les inscriptions seront fermées.'))await generate(n);
+  if(a==='rd'){curRound=Number(b.dataset.r);swapSel=null;render()}
+  if(a==='swap'){swapMode=!swapMode;swapSel=null;render()}
+  if(a==='sv'){const r=Number(b.dataset.r),c=b.dataset.c,m=Number(b.dataset.m),[ta,tb]=pairs(n['r'+r][c])[m-1];await saveScore(n,r,c,m,ta,tb)}
+  if(a==='ed'){drafts[b.dataset.k]={...(drafts[b.dataset.k]||{}),open:true};render()}
+  if(a==='r2'&&await ask('Passer à la ronde 2? Le 1er de chaque terrain monte, le 4e descend.'))await toRound2(n);
+  if(a==='fin'&&await ask('Terminer la soirée? Les cotes seront à jour dans le classement.'))await act('advance',{p_night:n.id,p_status:'fini',p_r2:{}},'Soirée terminée');
+  if(a==='rsvp'){const ni=nightsSorted().find(x=>x.status==='inscription'),on=!S.rsvp[ni.id+'__'+b.dataset.p];await act('set_rsvp',{p_night:ni.id,p_player:b.dataset.p,p_on:on},on?'Présence confirmée':'Présence annulée')}
+  if(a==='newNight'){const d=$('newDate').value;if(!d)return;if(S.nights[d]){toast('Cette soirée existe déjà');return}curNight=d;await saveNight({id:d,status:'inscription',r1:{},r2:{},wait:[],courts:0},'Soirée créée')}
+  if(a==='delNight'&&await ask('Supprimer cette soirée et ses pointages? Les cotes seront recalculées.')){curNight=null;await act('admin_delete_night',{p_id:b.dataset.n},'Soirée supprimée')}
+  if(a==='saveLeague'){await act('admin_set_league_code',{p_new:$('leagueSet').value},'Code de ligue changé')}
+  if(a==='addP'){const nm=$('newName').value.trim(),sd=Number($('newSeed').value);if(!nm||!isFinite(sd)){toast('Nom et cote requis');return}await act('admin_upsert_player',{p_id:null,p_name:nm,p_seed:sd,p_adj:0,p_active:true},nm+' ajouté')}
+  if(a==='bulk'){const names=$('bulk').value.split('\n').map(s=>s.replace(/^\s*\d+[\.\)]?\s*/,'').trim()).filter(Boolean);if(!names.length)return;
+    if(!await ask(`Charger ${names.length} joueurs avec des cotes de ${SEED_TOP} à ${SEED_BOT}?`))return;
+    const byName=Object.fromEntries(Object.entries(S.players).map(([id,p])=>[p.name.toLowerCase(),id]));
+    busy=true;try{for(let i=0;i<names.length;i++){const sd=Math.round(names.length>1?SEED_TOP-i*(SEED_TOP-SEED_BOT)/(names.length-1):1500),ex=byName[names[i].toLowerCase()],p=ex?S.players[ex]:null;
+      await rpc('admin_upsert_player',{p_code:code,p_id:ex||null,p_name:p?p.name:names[i],p_seed:sd,p_adj:p?Number(p.adj)||0:0,p_active:p?p.active!==false:true})}
+      toast('Classement chargé')}catch(err){toast(err.message)}finally{busy=false}await load()}
+  if(a==='delP'&&await ask(`Retirer ${name(b.dataset.id)} de la ligue? Ses pointages passés seront ignorés dans les cotes.`))await act('admin_delete_player',{p_id:b.dataset.id},'Joueur retiré');
+});
+function route(){const h=location.hash.slice(1);view=['soiree','presences','classement','admin'].includes(h)?h:'soiree';render()}
+addEventListener('hashchange',route);
+// Rafraîchit toutes les 8 secondes, sauf pendant qu'on tape un pointage.
+setInterval(()=>{if(code&&!busy&&document.visibilityState==='visible'&&!(document.activeElement&&document.activeElement.tagName==='INPUT'))load()},8000);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')load()});
+code=ls.get('pbcode'); route(); load();
+}
+</script>
+</body>
+</html>
