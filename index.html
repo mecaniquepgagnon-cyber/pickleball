@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ligue pickleball du jeudi</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<meta name="theme-color" content="#1d4f91">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Pickleball">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -104,9 +110,11 @@ tr.meRow td{background:color-mix(in srgb,var(--ball) 25%,transparent)}
 // ====== À REMPLIR : Supabase > Project Settings > API ======
 const SUPABASE_URL='https://vggxacxynhcoivnjianm.supabase.co';
 const SUPABASE_ANON_KEY='sb_publishable__B18jqGV1T3DIOVk_HVqzw_x7l0igGw';
+const VAPID_PUBLIC='BCn_O8b4IIDGhoePWm5x6IMbdjBwN5kSnwRFwx_JWdUrPoKCd3dNoCWNQ6kgPPJVneW6otnCWyreZ4WTwQE0CAs';
 // ===========================================================
 const K=16, MAXC=8, SEED_TOP=1700, SEED_BOT=1300;
-const S={players:{},nights:{},rsvp:{},scores:{},admin:false,league:'',ready:0};
+const S={players:{},nights:{},rsvp:{},scores:{},admin:false,league:'',push:[],ready:0};
+let swReg=null, remindMsg='';
 let code=null, view='soiree', curNight=null, curRound=null, swapMode=false, swapSel=null, busy=false;
 const drafts={};
 const $=id=>document.getElementById(id);
@@ -129,7 +137,7 @@ async function load(){
   if(!code)return;
   try{
     const st=await rpc('get_state',{p_code:code});
-    S.admin=!!st.admin; S.league=st.league_code||'';
+    S.admin=!!st.admin; S.league=st.league_code||''; S.push=st.push_players||[];
     S.players=Object.fromEntries(st.players.map(p=>[p.id,p]));
     S.nights=Object.fromEntries(st.nights.map(n=>[n.id,n]));
     S.rsvp=Object.fromEntries(st.rsvp.map(r=>[r.night+'__'+r.player,r]));
@@ -202,6 +210,44 @@ async function doSwap(n,r,x,y){
 }
 function myCourt(n,r){const me=ls.get('pbme');if(!me)return null;const cs=n['r'+r]||{};for(const c in cs)if(cs[c].includes(me))return c;if((n.wait||[]).includes(me))return 'w';return null}
 
+// ---------- Rappels (notifications) ----------
+const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+const standalone=matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
+const pushOK='serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;
+function b64u(s){const p='='.repeat((4-s.length%4)%4),b=atob((s+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(b,c=>c.charCodeAt(0))}
+async function enablePush(){
+  const me=ls.get('pbme'); if(!me){toast('Choisis d\'abord ton nom dans « Je suis »');return}
+  try{
+    const perm=await Notification.requestPermission(); if(perm!=='granted'){toast('Notifications refusées. Tu peux les permettre dans les réglages du téléphone.');return}
+    const reg=swReg||await navigator.serviceWorker.ready;
+    const sub=(await reg.pushManager.getSubscription())||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(VAPID_PUBLIC)});
+    await rpc('save_push',{p_code:code,p_player:me,p_sub:sub.toJSON()}); ls.set('pbpush',me); toast('Rappels activés sur ce téléphone'); render();
+  }catch(e){toast('Impossible d\'activer les rappels: '+e.message)}
+}
+async function disablePush(){
+  try{const reg=swReg||await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();
+    if(sub){await rpc('delete_push',{p_code:code,p_endpoint:sub.endpoint});await sub.unsubscribe()}
+    ls.set('pbpush',null);toast('Rappels désactivés');render()}catch(e){toast(e.message)}
+}
+async function callReminders(type,player){
+  try{const r=await fetch(`${SUPABASE_URL}/functions/v1/rappels`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code,type,player})});
+    const j=await r.json(); if(j.error)throw new Error(j.error); toast(`${j.sent} notification(s) envoyée(s)`)}catch(e){toast('Envoi impossible: '+e.message)}
+}
+function remindPanel(){
+  const me=ls.get('pbme'), on=ls.get('pbpush')&&ls.get('pbpush')===me&&typeof Notification!=='undefined'&&Notification.permission==='granted';
+  let t='<div class="panel"><h2>Rappels sur ton téléphone</h2>';
+  if(on)return t+`<p>Les rappels sont activés. Tu recevras une notification le mardi soir, puis le jeudi midi si tu n'as pas encore confirmé.</p><button data-act="pushOff">Désactiver les rappels</button></div>`;
+  if(isIOS&&!standalone)return t+`<p>Sur iPhone, installe d'abord l'application : ouvre ce site dans <b>Safari</b>, touche le bouton <b>Partager</b> puis <b>Sur l'écran d'accueil</b>. Ouvre ensuite l'application à partir de l'icône et reviens ici.</p></div>`;
+  if(!pushOK)return t+`<p class="note">Ce navigateur ne permet pas les notifications. Essaie avec Chrome sur Android ou Safari sur iPhone.</p></div>`;
+  return t+`<p>Reçois un rappel pour confirmer ta présence chaque semaine.</p><button class="go" data-act="pushOn"${me?'':' disabled'}>Activer les rappels</button>${me?'':'<p class="note">Choisis d\'abord ton nom dans « Je suis ».</p>'}</div>`;
+}
+function buildRemind(){
+  const n=nightsSorted().find(x=>x.status==='inscription'); if(!n){toast('Crée d\'abord la soirée');return ''}
+  const conf=new Set(confirmed(n.id).map(x=>x.player)), miss=Object.entries(S.players).filter(([id,p])=>p.active!==false&&!conf.has(id)).map(([,p])=>p.name).sort((a,b)=>a.localeCompare(b,'fr'));
+  const url=location.origin+location.pathname;
+  return `Pickleball ${fmtDate(n.id)} : confirme ta présence ici ${url} (code de ligue : ${S.league}).\nDéjà ${conf.size} confirmés.${miss.length?`\nPas encore de réponse : ${miss.join(', ')}.`:''}`;
+}
+
 // ---------- Vues ----------
 function vLogin(){return `<div class="panel" style="max-width:460px"><h2>Entrer dans la ligue</h2><p>Entre le code de ligue que l'organisateur t'a donné.</p><form id="login" class="row"><input id="codeIn" autocomplete="off" autocapitalize="characters" aria-label="Code de ligue" style="flex:1"><button class="go">Entrer</button></form></div>`}
 function whoBar(){
@@ -244,12 +290,12 @@ function vSoiree(){
 }
 function vPresences(){
   const n=nightsSorted().find(x=>x.status==='inscription');
-  if(!n)return `<p class="hero">Pas d'inscription ouverte</p><p class="note">Les présences ouvrent quand l'organisateur crée la prochaine soirée.</p>`;
+  if(!n)return `<p class="hero">Pas d'inscription ouverte</p><p class="note">Les présences ouvrent quand l'organisateur crée la prochaine soirée.</p>`+whoBar()+remindPanel();
   const act=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
   const mine=ls.get('pbme'), conf=confirmed(n.id), cut=Math.min(32,Math.floor(conf.length/4)*4), isIn=mine&&S.rsvp[n.id+'__'+mine];
   let h=`<h2 style="font-size:32px;margin:0 0 6px">${esc(fmtDate(n.id))}</h2><div class="panel">`+whoBar();
   if(mine&&S.players[mine])h+=isIn?`<button class="warn" data-act="rsvp" data-p="${esc(mine)}">Annuler ma présence</button>`:`<button class="go" data-act="rsvp" data-p="${esc(mine)}">Je serai là</button>`;
-  h+=`<p class="note">Places attribuées dans l'ordre de confirmation; au-delà des terrains complets, on est en attente.</p></div>`;
+  h+=`<p class="note">Places attribuées dans l'ordre de confirmation; au-delà des terrains complets, on est en attente.</p></div>`+remindPanel();
   h+=`<h2>${conf.length} confirmés</h2><ol class="list">${conf.map((x,i)=>`<li><span>${i+1}. ${esc(name(x.player))}</span><span class="pill">${i<cut?'Joue':'En attente'}</span></li>`).join('')}</ol>`;
   if(S.admin)h+=`<div class="panel" style="margin-top:16px"><h2>Pointer pour un joueur</h2><div class="ppl" style="padding:0">${act.map(([id,p])=>`<button data-act="rsvp" data-p="${esc(id)}" class="${S.rsvp[n.id+'__'+id]?'go':''}">${esc(p.name)}</button>`).join('')}</div></div>`;
   return h;
@@ -265,6 +311,9 @@ function vAdmin(){
   const low=ps.filter(([,p])=>p.active!==false).reduce((m,[id])=>Math.min(m,R[id]),Infinity);
   return `<div class="panel"><h2>Soirées</h2><div class="row"><input type="date" id="newDate" value="${nextThursday()}" aria-label="Date"><button class="go" data-act="newNight">Créer la soirée</button></div>
   <ul class="list" style="margin-top:10px">${ns.map(n=>`<li><span>${esc(fmtDate(n.id))}</span><span class="row"><select data-act="status" data-n="${esc(n.id)}" aria-label="Statut">${['inscription','r1','r2','fini'].map(s=>`<option value="${s}"${n.status===s?' selected':''}>${{inscription:'Inscription',r1:'Ronde 1',r2:'Ronde 2',fini:'Terminée'}[s]}</option>`).join('')}</select><button class="warn" data-act="delNight" data-n="${esc(n.id)}">Supprimer</button></span></li>`).join('')}</ul></div>
+  <div class="panel"><h2>Rappels</h2><p>${S.push.length} joueur(s) ont activé les rappels sur leur téléphone${S.push.length?': '+S.push.map(id=>esc(name(id))).join(', '):''}.</p><p class="note">Envoi automatique le mardi vers 18 h et le jeudi vers midi, seulement à ceux qui n'ont pas confirmé.</p>
+  <div class="row"><button class="go" data-act="remindMsg">Préparer le message Messenger</button><button data-act="remindNow">Envoyer le rappel maintenant</button><button data-act="remindTest">M'envoyer un test</button></div>
+  ${remindMsg?`<textarea id="remindTxt" style="margin-top:10px">${esc(remindMsg)}</textarea><button data-act="remindCopy">Copier</button>`:''}</div>
   <div class="panel"><h2>Code de ligue</h2><div class="row"><input id="leagueSet" value="${esc(S.league)}" autocomplete="off" style="width:180px" aria-label="Code de ligue"><button class="go" data-act="saveLeague">Changer</button></div><p class="note">C'est le code à donner aux joueurs. Ton code administrateur reste secret; il se change dans Supabase.</p></div>
   <div class="panel"><h2>Ajouter un joueur</h2><div class="row"><input id="newName" placeholder="Nom" aria-label="Nom"><input id="newSeed" inputmode="numeric" style="width:100px" value="${isFinite(low)?Math.round(low):1500}" aria-label="Cote de départ"><button class="go" data-act="addP">Ajouter</button></div><p class="note">Par défaut, la cote du dernier joueur actif: il commence au dernier terrain.</p></div>
   <div class="panel"><h2>Charger le classement initial</h2><textarea id="bulk" placeholder="Un nom par ligne, du 1er au dernier"></textarea><p class="note">Cotes de départ échelonnées de ${SEED_TOP} (1er) à ${SEED_BOT} (dernier). Un nom déjà présent voit sa cote de départ remplacée.</p><button class="go" data-act="bulk">Charger</button></div>
@@ -300,6 +349,12 @@ document.addEventListener('click',async e=>{
     if(!swapSel){swapSel=p;render();return} const x=swapSel;swapSel=null;
     if(x[0]===p[0]&&x[1]===p[1]){render();return} await doSwap(n,curRound,x,p); return}
   const b=e.target.closest('[data-act]');if(!b||b.tagName==='SELECT')return;const a=b.dataset.act,n=S.nights[curNight];
+  if(a==='pushOn')await enablePush();
+  if(a==='pushOff')await disablePush();
+  if(a==='remindMsg'){remindMsg=buildRemind();render();if(remindMsg)try{await navigator.clipboard.writeText(remindMsg);toast('Message copié, colle-le dans Messenger')}catch(x){toast('Sélectionne le texte et copie-le')}}
+  if(a==='remindCopy'){try{await navigator.clipboard.writeText($('remindTxt').value);toast('Message copié')}catch(x){$('remindTxt').select();toast('Texte sélectionné, copie-le')}}
+  if(a==='remindNow'&&await ask('Envoyer maintenant une notification à tous ceux qui n\'ont pas confirmé?'))await callReminders('premier',null);
+  if(a==='remindTest'){const me=ls.get('pbme');if(!me||!S.push.includes(me)){toast('Active d\'abord les rappels pour ton nom dans Présences');return}await callReminders('test',me)}
   if(a==='gen'&&await ask('Générer les terrains avec les joueurs confirmés? Les inscriptions seront fermées.'))await generate(n);
   if(a==='rd'){curRound=Number(b.dataset.r);swapSel=null;render()}
   if(a==='swap'){swapMode=!swapMode;swapSel=null;render()}
@@ -325,6 +380,7 @@ addEventListener('hashchange',route);
 // Rafraîchit toutes les 8 secondes, sauf pendant qu'on tape un pointage.
 setInterval(()=>{if(code&&!busy&&document.visibilityState==='visible'&&!(document.activeElement&&document.activeElement.tagName==='INPUT'))load()},8000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')load()});
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').then(r=>{swReg=r}).catch(()=>{});
 code=ls.get('pbcode'); route(); load();
 }
 </script>
