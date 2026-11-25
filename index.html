@@ -265,6 +265,11 @@ body[data-deco=terrain] .badge.on{background:rgb(255 255 255 /.12);border-color:
 body[data-deco=terrain] .spark{color:#e3f23a}
 body[data-deco=epure] .badge{border:0;background:#fff;box-shadow:0 1px 3px rgb(0 0 0 /.06)}body[data-deco=epure] .badge.on .bg{background:var(--acc);color:#fff;box-shadow:none}
 body[data-deco=epure] .spark{color:var(--acc)}
+.pstats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:10px}
+.pstats div{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px;text-align:center}
+.pstats .big{display:block;font-size:30px;line-height:1}.pstats small{font-size:12px;color:var(--mute);line-height:1.2;display:block}
+.spark.parc{height:120px}
+.pdet summary{cursor:pointer;font-weight:600;margin:8px 0;min-height:32px}
 @media(max-width:600px){table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:8em;text-align:start}.stack td::before{content:attr(data-l);float:inline-start;width:7.5em;margin-inline-start:-8em;white-space:normal}.stack td:empty{display:none}.match{grid-template-columns:minmax(0,1fr)}}
 </style>
 <script>new MutationObserver(()=>{for(const c of document.querySelectorAll('.stack td:not([data-l])')){let i=0,p=c;while(p=p.previousElementSibling)i+=p.colSpan;c.dataset.l=c.closest('table').rows[0].cells[i]?.textContent||''}}).observe(document,{childList:true,subtree:true})</script>
@@ -334,18 +339,29 @@ async function load(){
 async function act(fn,args,ok){if(busy)return;busy=true;try{await rpc(fn,{p_code:code,...args});if(ok)toast(ok);await load()}catch(e){toast(e.message)}finally{busy=false}}
 
 // ---------- Cote Elo ----------
+// Cote Elo calibrée pour la montée-descente :
+// mise à jour en lot (cotes du début de soirée, ordre des matchs sans effet),
+// K de 48 pendant les 12 premiers matchs d'un joueur puis 16, K du match = moyenne des 4 joueurs (somme nulle, partenaires égaux).
+const K_NEW=48, K_EST=16, N_PROV=12;
+// Les joueurs déjà inscrits avant la première soirée (classement repris de la saison en cours) sont établis dès le départ :
+// seuls les joueurs ajoutés après la première soirée ont le K provisoire.
+function isNew(p){const first=Object.keys(S.nights).sort()[0];if(!first||!p.created)return false;const d=new Date(p.created),loc=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;return loc>first}
 function compute(){
-  const R={},st={},mi={};
-  for(const [id,p] of Object.entries(S.players)){R[id]=Number(p.seed)||1500;st[id]={w:0,l:0,pf:0,pa:0,nights:new Set(),last:0,lastNight:null,pre:{},byNight:{}}}
+  const R={},st={},mi={},cnt={};
+  for(const [id,p] of Object.entries(S.players)){R[id]=Number(p.seed)||1500;cnt[id]=isNew(p)?0:N_PROV;st[id]={w:0,l:0,pf:0,pa:0,nights:new Set(),last:0,lastNight:null,pre:{},byNight:{}}}
   const list=Object.values(S.scores).filter(s=>S.nights[s.night]&&valid(s.sa,s.sb)).sort((a,b)=>a.night.localeCompare(b.night)||a.round-b.round||a.court-b.court||a.m-b.m);
-  for(const s of list){
-    const A=s.a.filter(x=>R[x]!=null),B=s.b.filter(x=>R[x]!=null); if(!A.length||!B.length)continue;
-    const ra=A.reduce((t,x)=>t+R[x],0)/A.length, rb=B.reduce((t,x)=>t+R[x],0)/B.length;
-    for(const x of [...A,...B])if(!(s.night in st[x].pre))st[x].pre[s.night]=R[x];
-    const ea=1/(1+10**((rb-ra)/400)), sa=s.sa>s.sb?1:0, mg=Math.abs(s.sa-s.sb); mi[s.id]={ra,rb,ea};
-    const M=0.6+0.4*Math.log(mg+1)/Math.log(11), d=K*M*(sa-ea);
-    const apply=(ids,dd,pf,pa,win)=>ids.forEach(x=>{R[x]+=dd;const t=st[x];t.pf+=pf;t.pa+=pa;win?t.w++:t.l++;t.nights.add(s.night);if(t.lastNight!==s.night){t.lastNight=s.night;t.last=0}t.last+=dd;t.byNight[s.night]=(t.byNight[s.night]||0)+dd});
-    apply(A,d,s.sa,s.sb,sa===1);apply(B,-d,s.sb,s.sa,sa===0);
+  const byN={};for(const s of list)(byN[s.night]=byN[s.night]||[]).push(s);
+  for(const nid of Object.keys(byN).sort()){
+    const pre={...R},c0={...cnt},delta={};
+    for(const s of byN[nid]){
+      const A=s.a.filter(x=>R[x]!=null),B=s.b.filter(x=>R[x]!=null); if(!A.length||!B.length)continue;
+      const ra=A.reduce((t,x)=>t+pre[x],0)/A.length, rb=B.reduce((t,x)=>t+pre[x],0)/B.length;
+      const ea=1/(1+10**((rb-ra)/400)), sa=s.sa>s.sb?1:0, mg=Math.abs(s.sa-s.sb); mi[s.id]={ra,rb,ea};
+      const k=mean([...A,...B].map(x=>c0[x]<N_PROV?K_NEW:K_EST)), M=0.6+0.4*Math.log(mg+1)/Math.log(11), d=k*M*(sa-ea), dn=K_EST*M*(sa-ea);
+      const apply=(ids,dd,pf,pa,win,pn)=>ids.forEach(x=>{delta[x]=(delta[x]||0)+dd;cnt[x]++;const t=st[x];t.perf=t.perf||{};t.perf[nid]=(t.perf[nid]||0)+pn;if(!(nid in t.pre))t.pre[nid]=pre[x];t.pf+=pf;t.pa+=pa;win?t.w++:t.l++;t.nights.add(nid);if(t.lastNight!==nid){t.lastNight=nid;t.last=0}t.last+=dd;t.byNight[nid]=(t.byNight[nid]||0)+dd});
+      apply(A,d,s.sa,s.sb,sa===1,dn);apply(B,-d,s.sb,s.sa,sa===0,-dn);
+    }
+    for(const x in delta)R[x]+=delta[x];
   }
   for(const id in R)R[id]+=Number(S.players[id].adj)||0;
   return {R,st,mi};
@@ -368,7 +384,7 @@ function trophies(nid,st){
     const up=[];for(const m of L)for(const mate of m.mates){const o=(P[mate]||[]).filter(q=>q.id!==m.id);if(o.length)up.push((m.my-m.op)-mean(o.map(q=>q.my-q.op)))}
     let close=0;const bon=L.map(m=>{const ta=mean([x,...m.mates].map(pre)),oa=mean(m.opp.map(pre));if(m.my<m.op&&oa>ta){if(m.op-m.my<=4)close++;return (1-(m.op-m.my)/21)*Math.min(1,(oa-ta)/100)}return 0});
     const w=L.filter(m=>m.my>m.op).length;
-    sc[x]={ja:mean(up),lb:mean(L.map(m=>1-Math.abs(m.my-m.op)/21))+mean(bon),gain:st[x]?.byNight?.[nid]||0,
+    sc[x]={ja:mean(up),lb:mean(L.map(m=>1-Math.abs(m.my-m.op)/21))+mean(bon),gain:st[x]?.perf?.[nid]||0,real:st[x]?.byNight?.[nid]||0,
       wt:mean(L.map(m=>((m.my>m.op?1:0)+(m.my-m.op)/21)*(1+0.5*(N-m.court)/Math.max(1,N-1)))),
       margin:mean(L.map(m=>Math.abs(m.my-m.op))),close,w,l:L.length-w}}
   const z=k=>{const v=el.map(x=>sc[x][k]),mu=mean(v),sd=Math.sqrt(mean(v.map(q=>(q-mu)**2)))||1;for(const x of el)sc[x]['z'+k]=(sc[x][k]-mu)/sd};
@@ -379,7 +395,7 @@ function trophies(nid,st){
   return TROPH.map(t=>{const x=win[t.k],s=sc[x];
     const why=t.k==='ja'?`Ses partenaires ont fait en moyenne ${f1(s.ja)} points de mieux à ses côtés qu'avec leurs autres partenaires.`
       :t.k==='lb'?`Écart moyen de ${s.margin.toFixed(1).replace('.',',')} points dans ses matchs${s.close?`, ${s.close} défaite(s) serrée(s) contre plus fort`:''}.`
-      :`${Math.round(s.gain)>=0?'+':''}${Math.round(s.gain)} de cote ce soir, fiche de ${s.w} victoire(s) et ${s.l} défaite(s).`;
+      :`${Math.round(s.real)>=0?'+':''}${Math.round(s.real)} de cote ce soir, fiche de ${s.w} victoire(s) et ${s.l} défaite(s).`;
     return {...t,who:x,why}});
 }
 function palmares(st){const c={};for(const n of Object.values(S.nights))if(n.status==='fini'){const t=trophies(n.id,st);if(t)for(const x of t){c[x.who]=c[x.who]||{ja:0,lb:0,mr:0};c[x.who][x.k]++}}return c}
@@ -434,6 +450,28 @@ function messengerRecap(nid){const {tro}=deep(),t=tro[nid];let s=`Pickleball ${f
   const f=faits(nid);if(f.length)s+='\n\nFaits saillants\n'+f.map(([a,b])=>`${a} : ${b}`).join('\n');
   const pr=Object.values(S.pronos).filter(p=>p.night===nid&&t);if(pr.length&&t){const w=Object.fromEntries(t.map(y=>[y.k,y.who]));const good=pr.map(p=>[p.player,['ja','lb','mr'].filter(k=>p[k]===w[k]).length]).filter(q=>q[1]>0).sort((a,b)=>b[1]-a[1]);if(good.length)s+=`\n\nPronostics réussis : ${good.map(([x,n])=>`${name(x)} (${n})`).join(', ')}`}
   return s+`\n\n${location.origin+location.pathname}`}
+// Historique de la saison avant l'application (Fwango) : terrain et position seulement, sans pointages.
+// Sert uniquement au parcours dans Ma fiche : aucun effet sur la cote, les trophées ni les badges.
+const HIST={"2026-11-12":[[1,1,"Mike Belle Donne"],[1,2,"Martin Marquis"],[1,3,"Nathan Ouellette"],[1,4,"Patrice Cuillerier"],[2,1,"Juliette Turcotte"],[2,2,"Jean Paquet"],[2,3,"Julien Gilbert Quintal"],[2,4,"Nicolas Jolicoeur"],[3,1,"Martin Bergeron"],[3,2,"Michel Godbout"],[3,3,"Alain Turcotte"],[3,4,"Marie-Ève Martineau"],[4,1,"Roy Azar"],[4,2,"Claudia Ismail"],[4,3,"Francis Clemzy"],[4,4,"Philippe Gagnon"],[5,1,"Mathieu Mathurin"],[5,2,"Sarah Hénault"],[5,3,"Alexis Saulnier"],[5,4,"Sébastien Sun"],[6,1,"Véronique Lefrancois"],[6,2,"Martine Sicard"],[6,3,"JF Pilon"],[6,4,"Anne Vaillancourt"],[7,1,"Mikael Liebner"],[7,2,"Manon Benoit"],[7,3,"Sabrina De Michele"],[7,4,"Anne-Marie Brault"]],"2026-11-05":[[1,1,"Martin Castonguay"],[1,2,"Martin Marquis"],[1,3,"Mike Belle Donne"],[1,4,"Patrice Cuillerier"],[2,1,"Sébastien Morrier"],[2,2,"Juliette Turcotte"],[2,3,"Jean Paquet"],[2,4,"Pierre Rompré"],[3,1,"Nathan Ouellette"],[3,2,"Nicolas Jolicoeur"],[3,3,"Martin Bergeron"],[3,4,"Marie-Ève Martineau"],[4,1,"Francis Clemzy"],[4,2,"Mathieu Mathurin"],[4,3,"Julie Lacelle"],[4,4,"Philippe Gagnon"],[5,1,"Roy Azar"],[5,2,"Sarah Hénault"],[5,3,"Alexis Saulnier"],[5,4,"Sabrina De Michele"],[6,1,"Jean-Francois Paré"],[6,2,"Valérie Pratte"],[6,3,"Manon Benoit"],[6,4,"Anne-Marie Brault"]],"2026-10-29":[[1,1,"Mike Belle Donne"],[1,2,"Martin Castonguay"],[1,3,"Martin Marquis"],[1,4,"Sébastien Morrier"],[2,1,"Pierre Rompré"],[2,2,"Nicolas Jolicoeur"],[2,3,"Patrice Cuillerier"],[2,4,"Yannick Belle"],[3,1,"Michel Godbout"],[3,2,"Jean Paquet"],[3,3,"Julien Gilbert Quintal"],[3,4,"Martin Bergeron"],[4,1,"Nathan Ouellette"],[4,2,"Juliette Turcotte"],[4,3,"Kate Di Lallo"],[4,4,"Claudia Ismail"],[5,1,"Mathieu Mathurin"],[5,2,"Véronique Lefrancois"],[5,3,"Marie-Ève Martineau"],[5,4,"Alexis Saulnier"],[6,1,"Sébastien Sun"],[6,2,"Valérie Pratte"],[6,3,"Sabrina De Michele"],[6,4,"Jean-Francois Paré"],[7,1,"Francis Clemzy"],[7,2,"Roy Azar"],[7,3,"Manon Benoit"],[7,4,"Mikael Liebner"]],"2026-10-22":[[1,1,"Mike Belle Donne"],[1,2,"Nicolas Jolicoeur"],[1,3,"Martin Marquis"],[1,4,"Sébastien Morrier"],[2,1,"Martin Castonguay"],[2,2,"Julien Gilbert Quintal"],[2,3,"Pierre Rompré"],[2,4,"Martin Bergeron"],[3,1,"Patrice Cuillerier"],[3,2,"Jean Paquet"],[3,3,"Nathan Ouellette"],[3,4,"Michel Godbout"],[4,1,"Juliette Turcotte"],[4,2,"Marie-Ève Martineau"],[4,3,"Kate Di Lallo"],[4,4,"Véronique Lefrancois"],[5,1,"Sabrina De Michele"],[5,2,"Alexis Saulnier"],[5,3,"Sarah Hénault"],[5,4,"Mathieu Mathurin"],[6,1,"Philippe Gagnon"],[6,2,"Valérie Pratte"],[6,3,"Sébastien Sun"],[6,4,"Francis Clemzy"],[7,1,"Jean-Francois Paré"],[7,2,"Manon Benoit"],[7,3,"Mikael Liebner"],[7,4,"Anne-Marie Brault"]],"2026-10-15":[[1,1,"Sébastien Morrier"],[1,2,"Yannick Belle"],[1,3,"Martin Marquis"],[1,4,"Alexandre Ruest"],[2,1,"Julien Gilbert Quintal"],[2,2,"Martin Bergeron"],[2,3,"Jean Paquet"],[2,4,"Nathan Ouellette"],[3,1,"Pierre Rompré"],[3,2,"Mathieu Mathurin"],[3,3,"Michel Godbout"],[3,4,"Véronique Lefrancois"],[4,1,"Marie-Ève Martineau"],[4,2,"Sébastien Sun"],[4,3,"Sarah Hénault"],[4,4,"Roy Azar"],[5,1,"Alexis Saulnier"],[5,2,"Francis Clemzy"],[5,3,"Sabrina De Michele"],[5,4,"Jean-Francois Paré"],[6,1,"Philippe Gagnon"],[6,2,"Anne Vaillancourt"],[6,3,"Anne-Marie Brault"],[6,4,"Valérie Pratte"]],"2026-10-08":[[1,1,"Alexandre Ruest"],[1,2,"Jean Paquet"],[1,3,"Martin Marquis"],[1,4,"Juliette Turcotte"],[2,1,"Yannick Belle"],[2,2,"Julien Gilbert Quintal"],[2,3,"Michel Godbout"],[2,4,"Claudia Ismail"],[3,1,"Nathan Ouellette"],[3,2,"Sébastien Morrier"],[3,3,"Pierre Rompré"],[3,4,"Kate Di Lallo"],[4,1,"Mathieu Mathurin"],[4,2,"Martin Bergeron"],[4,3,"Marie-Ève Martineau"],[4,4,"Manon Benoit"],[5,1,"Roy Azar"],[5,2,"Sarah Hénault"],[5,3,"Véronique Lefrancois"],[5,4,"Sébastien Sun"],[6,1,"Sabrina De Michele"],[6,2,"Alexis Saulnier"],[6,3,"Jean-Francois Paré"],[6,4,"Philippe Gagnon"]],"2026-10-01":[[1,1,"Nicolas Jolicoeur"],[1,2,"Juliette Turcotte"],[1,3,"Claudia Ismail"],[1,4,"Jean Paquet"],[2,1,"Martin Marquis"],[2,2,"Michel Godbout"],[2,3,"Alexandre Ruest"],[2,4,"Patrice Cuillerier"],[3,1,"Mike Belle Donne"],[3,2,"Sébastien Morrier"],[3,3,"Pierre Rompré"],[3,4,"Nathan Ouellette"],[4,1,"Martin Castonguay"],[4,2,"Julien Gilbert Quintal"],[4,3,"Martin Bergeron"],[4,4,"Alain Turcotte"],[5,1,"Manon Benoit"],[5,2,"Kate Di Lallo"],[5,3,"Mathieu Mathurin"],[5,4,"Stéphanie Ouellette"],[6,1,"Sarah Hénault"],[6,2,"Véronique Lefrancois"],[6,3,"Marie-Ève Martineau"],[6,4,"Sébastien Sun"],[7,1,"Jean-Francois Paré"],[7,2,"Philippe Gagnon"],[7,3,"Mikael Liebner"],[7,4,"Francis Clemzy"],[8,1,"Anne Vaillancourt"],[8,2,"Valérie Pratte"],[8,3,"Alexis Saulnier"],[8,4,"Anne-Marie Brault"]],"2026-09-24":[[1,1,"Jean Paquet"],[1,2,"Nicolas Jolicoeur"],[1,3,"Juliette Turcotte"],[1,4,"Martin Marquis"],[2,1,"Patrice Cuillerier"],[2,2,"Alexandre Ruest"],[2,3,"Mike Belle Donne"],[2,4,"Pierre Rompré"],[3,1,"Claudia Ismail"],[3,2,"Nathan Ouellette"],[3,3,"Michel Godbout"],[3,4,"Kate Di Lallo"],[4,1,"Alain Turcotte"],[4,2,"Martin Castonguay"],[4,3,"Julien Gilbert Quintal"],[4,4,"Mathieu Mathurin"],[5,1,"Martin Bergeron"],[5,2,"Manon Benoit"],[5,3,"Fréderic Lamarre"],[5,4,"Stéphanie Ouellette"],[6,1,"Marie-Ève Martineau"],[6,2,"Francis Clemzy"],[6,3,"JF Pilon"],[6,4,"Sébastien Sun"],[7,1,"Sarah Hénault"],[7,2,"Véronique Lefrancois"],[7,3,"Mikael Liebner"],[7,4,"Sabrina De Michele"],[8,1,"Philippe Gagnon"],[8,2,"Valérie Pratte"],[8,3,"Jean-Francois Paré"],[8,4,"Anne-Marie Brault"]],"2026-09-17":[[1,1,"Juliette Turcotte"],[1,2,"Nicolas Jolicoeur"],[1,3,"Mike Belle Donne"],[1,4,"Jean Paquet"],[2,1,"Martin Marquis"],[2,2,"Sébastien Morrier"],[2,3,"Patrice Cuillerier"],[2,4,"Michel Godbout"],[3,1,"Nathan Ouellette"],[3,2,"Kate Di Lallo"],[3,3,"Julien Gilbert Quintal"],[3,4,"Claudia Ismail"],[4,1,"Martin Bergeron"],[4,2,"Manon Benoit"],[4,3,"Mathieu Mathurin"],[4,4,"Sarah Hénault"],[5,1,"Sébastien Sun"],[5,2,"Marie-Ève Martineau"],[5,3,"Mikael Liebner"],[5,4,"Anne Vaillancourt"],[6,1,"Valérie Pratte"],[6,2,"Alexis Saulnier"],[6,3,"Jean-Francois Paré"],[6,4,"Anne-Marie Brault"]],"2026-09-10":[[1,1,"Alexandre Ruest"],[1,2,"Sébastien Morrier"],[1,3,"Mike Belle Donne"],[1,4,"Yannick Belle"],[2,1,"Juliette Turcotte"],[2,2,"Jean Paquet"],[2,3,"Martin Marquis"],[2,4,"Patrice Cuillerier"],[3,1,"Michel Boucher"],[3,2,"Michel Godbout"],[3,3,"Julien Gilbert Quintal"],[3,4,"Claudia Ismail"],[4,1,"Alain Turcotte"],[4,2,"Kate Di Lallo"],[4,3,"Nicolas Jarry"],[4,4,"Roy Azar"],[5,1,"Sébastien Sun"],[5,2,"Mathieu Mathurin"],[5,3,"Martin Bergeron"],[5,4,"Marie-Ève Martineau"],[6,1,"Manon Benoit"],[6,2,"Martine Sicard"],[6,3,"Mikael Liebner"],[6,4,"Sabrina De Michele"],[7,1,"Valérie Pratte"],[7,2,"Jean-Francois Paré"],[7,3,"Philippe Gagnon"],[7,4,"Anne Vaillancourt"]]};
+const norm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+function parcours(id){
+  const nm=norm(S.players[id]?.name),out=[];
+  for(const [d,L] of Object.entries(HIST))for(const [c,pos,n] of L)if(norm(n)===nm)out.push({d,c,pos,src:'fwango'});
+  const {R}=deep();
+  for(const n of Object.values(S.nights))if(n.status==='fini'&&!HIST[n.id]){const cs=n.r2&&Object.keys(n.r2).length?n.r2:n.r1||{},r=n.r2&&Object.keys(n.r2).length?2:1;
+    for(const [c,ids] of Object.entries(cs))if(ids.includes(id)){const sd=standings(n.id,r,c,ids,R);out.push({d:n.id,c:Number(c),pos:sd.findIndex(x=>x.id===id)+1,src:'app'})}}
+  return out.sort((a,b)=>a.d.localeCompare(b.d));
+}
+function vParcours(id){const P=parcours(id);if(!P.length)return '';
+  const W=300,H=110,maxC=Math.max(8,...P.map(p=>p.c)),xs=i=>P.length>1?10+i/(P.length-1)*(W-20):W/2,ys=c=>8+(c-1)/(maxC-1)*(H-16);
+  const t1=P.filter(p=>p.c===1).length,best=Math.min(...P.map(p=>p.c)),avg=P.slice(-4).reduce((t,p)=>t+p.c,0)/Math.min(4,P.length);
+  const lab=d=>{const [y,m,j]=d.split('-').map(Number);return new Date(y,m-1,j).toLocaleDateString('fr-CA',{day:'numeric',month:'short'})};
+  return `<h3 class="fh">Parcours de la saison</h3>
+  <div class="pstats"><div><span class="big">${P.length}</span><small>soirées jouées</small></div><div><span class="big">${best}</span><small>meilleur terrain</small></div><div><span class="big">${avg.toFixed(1).replace('.',',')}</span><small>terrain moyen, 4 dernières</small></div><div><span class="big">${t1}</span><small>fois au terrain 1</small></div></div>
+  <svg class="spark parc" viewBox="0 0 ${W} ${H}" aria-label="Terrain à chaque soirée">${Array.from({length:maxC},(_,i)=>`<line x1="0" x2="${W}" y1="${ys(i+1)}" y2="${ys(i+1)}" stroke="currentColor" stroke-opacity=".12"/>`).join('')}<polyline fill="none" stroke="currentColor" stroke-width="2.5" vector-effect="non-scaling-stroke" points="${P.map((p,i)=>`${xs(i).toFixed(1)},${ys(p.c).toFixed(1)}`).join(' ')}"/>${P.map((p,i)=>`<circle cx="${xs(i).toFixed(1)}" cy="${ys(p.c).toFixed(1)}" r="3.5" fill="${p.src==='app'?'currentColor':'var(--bg)'}" stroke="currentColor" stroke-width="2"/>`).join('')}</svg>
+  <div class="sparkl"><span>Terrain 1 en haut</span><span>${esc(lab(P[0].d))} à ${esc(lab(P[P.length-1].d))}</span></div>
+  <details class="pdet"><summary>Voir chaque soirée</summary><ul class="list">${[...P].reverse().map(p=>`<li><span>${esc(lab(p.d))}</span><span>Terrain ${p.c}, ${p.pos}<sup>${p.pos===1?'er':'e'}</sup>${p.src==='fwango'?' <small class="note">(Fwango)</small>':''}</span></li>`).join('')}</ul></details>
+  <p class="note">Avant l'application, seuls le terrain et la position finale de chaque soirée sont connus (données de Fwango). Ils ne comptent pas dans la cote, les trophées ni les badges.</p>`}
 function vFiche(){
   const {R,D,pal}=deep(), id=ficheId||ls.get('pbme'), all=Object.entries(S.players).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
   let h=`<div class="row" style="margin-bottom:14px"><label for="ficheSel">Fiche de</label><select id="ficheSel"><option value="">Choisis un joueur</option>${all.map(([x,p])=>`<option value="${esc(x)}"${x===id?' selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`;
@@ -442,6 +480,7 @@ function vFiche(){
   const pct=nx?Math.max(0,Math.min(100,(r-t[0])/(nx[0]-t[0])*100)):100;
   h+=`<section class="fiche"><div class="fhead"><div><div class="twho">${esc(S.players[id].name)}</div>${tierTag(r)}</div><div class="fnum"><span class="big">${Math.round(r)}</span><small>cote · record ${Math.round(Math.max(o.best,r))}</small></div></div>`;
   h+=`<div class="tierbar" style="--tc:${t[2]}"><div style="width:${pct.toFixed(0)}%"></div></div><p class="note">${nx?`${Math.ceil(nx[0]-r)} points avant ${nx[1]}`:'Palier maximal atteint!'}</p>`;
+  h+=vParcours(id);
   const hs=o.hist; if(hs.length>=2){const lo=Math.min(...hs.map(q=>q.r))-10,hi=Math.max(...hs.map(q=>q.r))+10,W=300,H=90,xs=i=>i/(hs.length-1)*W,ys=v=>H-(v-lo)/(hi-lo)*H;
     h+=`<h3 class="fh">Progression de la cote</h3><svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Courbe de la cote"><polyline fill="none" stroke="currentColor" stroke-width="3" vector-effect="non-scaling-stroke" points="${hs.map((q,i)=>`${xs(i).toFixed(1)},${ys(q.r).toFixed(1)}`).join(' ')}"/></svg><div class="sparkl"><span>${esc(fmtDate(hs[0].n))}</span><span>${esc(fmtDate(hs[hs.length-1].n))}</span></div>`}
   const pick=(m,f)=>Object.entries(m).filter(([y,q])=>S.players[y]&&q.n>=2).sort((a,b)=>f(b[1])-f(a[1])||b[1].n-a[1].n)[0];
@@ -542,7 +581,7 @@ function remindPanel(){
 }
 function buildRemind(){
   const n=nightsSorted().find(x=>x.status==='inscription'); if(!n){toast('Crée d\'abord la soirée');return ''}
-  const L=lineup(n.id), miss=Object.entries(S.players).filter(([id,p])=>p.active!==false&&!S.rsvp[n.id+'__'+id]).map(([,p])=>p.name).sort((a,b)=>a.localeCompare(b,'fr'));
+  const L=lineup(n.id), miss=Object.entries(S.players).filter(([id,p])=>p.active!==false&&!p.sub_only&&!S.rsvp[n.id+'__'+id]).map(([,p])=>p.name).sort((a,b)=>a.localeCompare(b,'fr'));
   const url=location.origin+location.pathname;
   return `Pickleball ${fmtDate(n.id)} : indique si tu seras présent, absent ou disponible pour remplacer ici ${url} (code de ligue : ${S.league}).\nDéjà ${L.P.length} confirmés${L.Rm.length?` et ${L.Rm.length} remplaçant(s)`:''}.${miss.length?`\nPas encore de réponse : ${miss.join(', ')}.`:''}`;
 }
@@ -597,9 +636,11 @@ function vPresences(){
   if(!n)return `<p class="hero">Pas d'inscription ouverte</p><p class="note">Les présences ouvrent quand l'organisateur crée la prochaine soirée.</p>`+whoBar()+remindPanel();
   const act=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
   const mine=ls.get('pbme'), L=lineup(n.id), st=mine&&S.rsvp[n.id+'__'+mine]?.status;
-  const ab=answers(n.id,'absent'), none=act.filter(([id])=>!S.rsvp[n.id+'__'+id]);
+  const ab=answers(n.id,'absent'), none=act.filter(([id,p])=>!p.sub_only&&!S.rsvp[n.id+'__'+id]);
   let h=`<h2 style="font-size:32px;margin:0 0 6px">${esc(fmtDate(n.id))}</h2><div class="panel">`+whoBar();
-  if(mine&&S.players[mine])h+=`<div class="row">${PRES.map(([k,l])=>`<button data-act="pres" data-s="${k}" data-p="${esc(mine)}" class="${st===k?'go':''}">${st===k?'✓ ':''}${l}</button>`).join('')}</div>${st?`<p style="margin:10px 0 0"><button data-act="pres" data-s="" data-p="${esc(mine)}">Effacer ma réponse</button></p>`:''}`;
+  const so=mine&&S.players[mine]?.sub_only;
+  if(so)h+=`<p style="margin:0 0 10px"><b>Tu es inscrit comme remplaçant.</b> Indique si tu es disponible : un administrateur confirmera ta place s'il manque des joueurs.</p>`;
+  if(mine&&S.players[mine])h+=`<div class="row">${PRES.filter(([k])=>!(so&&k==='present')).map(([k,l])=>`<button data-act="pres" data-s="${k}" data-p="${esc(mine)}" class="${st===k?'go':''}">${st===k?'✓ ':''}${l}</button>`).join('')}</div>${st?`<p style="margin:10px 0 0"><button data-act="pres" data-s="" data-p="${esc(mine)}">Effacer ma réponse</button></p>`:''}`;
   if(st==='remplacant')h+=`<p style="margin:10px 0 0"><b>Tu es en réserve.</b> Si un administrateur confirme ta place, tu recevras une notification et ton nom passera dans les confirmés.</p>`;
   h+=`<p class="note">Les présents ont les places dans l'ordre de confirmation. Un remplaçant joue seulement si un administrateur confirme sa place.</p></div>`+remindPanel();
   if(mine&&S.players[mine]){const pr=S.pronos[n.id+'__'+mine]||{},opts=sel=>`<option value="">À choisir</option>`+act.map(([id,p])=>`<option value="${esc(id)}"${id===sel?' selected':''}>${esc(p.name)}</option>`).join('');
@@ -616,7 +657,7 @@ function vClassement(){
   const {R,st,pal,D}=deep(), rows=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>R[b[0]]-R[a[0]]);
   const tro=id=>{const c=pal[id];return c?TROPH.filter(t=>c[t.k]).map(t=>`<span class="tb" style="--tc:${t.col}" title="${t.name}">${c[t.k]}&nbsp;${t.name.replace(/^Le /,'').split(/[ -]/).pop()}</span>`).join(' '):''};
   if(!rows.length)return `<p class="hero">Aucun joueur</p><p class="note">La liste des joueurs sera chargée par l'organisateur.</p>`;
-  return `<p class="note">Cote Elo: une victoire contre plus fort rapporte plus, un gros écart ajoute un bonus. Une absence ne change pas la cote.</p><table class="stack"><thead><tr><th>#</th><th>Joueur</th><th class="r">Cote</th><th class="r">Dernière soirée</th><th class="r">V-D</th><th class="r">Diff.</th><th class="r">Soirées</th><th>Trophées</th></tr></thead><tbody>${rows.map(([id,p],i)=>{const t=st[id],d=Math.round(t.last),df=t.pf-t.pa;return `<tr${id===ls.get('pbme')?' class="meRow"':''}><td>${i+1}</td><td><button class="lnk" data-act="fiche" data-p="${esc(id)}">${esc(p.name)}</button> ${tierTag(R[id])}</td><td class="r big">${Math.round(R[id])}</td><td class="r ${d>0?'plus':d<0?'minus':''}">${t.lastNight?(d>0?'+':'')+d:''}</td><td class="r">${t.w}-${t.l}</td><td class="r">${df>0?'+':''}${df}</td><td class="r">${t.nights.size}</td><td>${tro(id)}</td></tr>`}).join('')}</tbody></table>${(()=>{const pr=Object.entries(D).filter(([x,o])=>o.pts&&S.players[x]).sort((a,b)=>b[1].pts-a[1].pts).slice(0,5);return pr.length?`<h2 style="margin-top:24px">Meilleurs pronostiqueurs</h2><ol class="list">${pr.map(([x,o])=>`<li><span>${esc(name(x))}</span><span class="pill">${o.pts} pt${o.pts>1?'s':''}</span></li>`).join('')}</ol>`:''})()}`;
+  return `<p class="note">Cote Elo : une victoire contre plus fort rapporte plus, et un gros écart ajoute un bonus. La cote change une fois par soirée, d'après les cotes du début de soirée, donc l'ordre des matchs n'a aucun effet. Un nouveau joueur, ajouté en cours de saison, bouge plus vite pendant ses 12 premiers matchs pour trouver son niveau. Une absence ne change pas la cote.</p><table class="stack"><thead><tr><th>#</th><th>Joueur</th><th class="r">Cote</th><th class="r">Dernière soirée</th><th class="r">V-D</th><th class="r">Diff.</th><th class="r">Soirées</th><th>Trophées</th></tr></thead><tbody>${rows.map(([id,p],i)=>{const t=st[id],d=Math.round(t.last),df=t.pf-t.pa;return `<tr${id===ls.get('pbme')?' class="meRow"':''}><td>${i+1}</td><td><button class="lnk" data-act="fiche" data-p="${esc(id)}">${esc(p.name)}</button> ${tierTag(R[id])}${p.sub_only?' <span class="tier" style="--tc:#c9ced6">Remplaçant</span>':''}</td><td class="r big">${Math.round(R[id])}</td><td class="r ${d>0?'plus':d<0?'minus':''}">${t.lastNight?(d>0?'+':'')+d:''}</td><td class="r">${t.w}-${t.l}</td><td class="r">${df>0?'+':''}${df}</td><td class="r">${t.nights.size}</td><td>${tro(id)}</td></tr>`}).join('')}</tbody></table>${(()=>{const pr=Object.entries(D).filter(([x,o])=>o.pts&&S.players[x]).sort((a,b)=>b[1].pts-a[1].pts).slice(0,5);return pr.length?`<h2 style="margin-top:24px">Meilleurs pronostiqueurs</h2><ol class="list">${pr.map(([x,o])=>`<li><span>${esc(name(x))}</span><span class="pill">${o.pts} pt${o.pts>1?'s':''}</span></li>`).join('')}</ol>`:''})()}`;
 }
 function vAdmin(){
   if(!S.admin)return `<p>Section réservée à l'organisateur.</p>`;
@@ -629,8 +670,8 @@ function vAdmin(){
   ${remindMsg?`<textarea id="remindTxt" style="margin-top:10px">${esc(remindMsg)}</textarea><button data-act="remindCopy">Copier</button>`:''}</div>
   <div class="panel"><h2>Code de ligue</h2><div class="row"><input id="leagueSet" value="${esc(S.league)}" autocomplete="off" style="width:180px" aria-label="Code de ligue"><button class="go" data-act="saveLeague">Changer</button></div><p class="note">C'est le code à donner aux joueurs. Ton code administrateur reste secret; il se change dans Supabase.</p></div>
   <div class="panel"><h2>Ajouter un joueur</h2><div class="row"><input id="newName" placeholder="Nom" aria-label="Nom"><input id="newSeed" inputmode="numeric" style="width:100px" value="${isFinite(low)?Math.round(low):1500}" aria-label="Cote de départ"><button class="go" data-act="addP">Ajouter</button></div><p class="note">Par défaut, la cote du dernier joueur actif: il commence au dernier terrain.</p></div>
-  <div class="panel"><h2>Charger le classement initial</h2><textarea id="bulk" placeholder="Un nom par ligne, du 1er au dernier"></textarea><p class="note">Cotes de départ échelonnées de ${SEED_TOP} (1er) à ${SEED_BOT} (dernier). Un nom déjà présent voit sa cote de départ remplacée.</p><button class="go" data-act="bulk">Charger</button></div>
-  <div class="panel"><h2>Joueurs (${ps.length})</h2><table class="stack"><thead><tr><th>Nom</th><th class="r">Départ</th><th class="r">Ajust.</th><th class="r">Cote</th><th>Actif</th><th></th></tr></thead><tbody>${ps.map(([id,p])=>`<tr><td><input data-pf="name" data-id="${esc(id)}" value="${esc(p.name)}" aria-label="Nom"></td><td class="r"><input data-pf="seed" data-id="${esc(id)}" value="${esc(p.seed)}" inputmode="numeric" style="width:80px" aria-label="Cote de départ"></td><td class="r"><input data-pf="adj" data-id="${esc(id)}" value="${esc(p.adj||0)}" inputmode="numeric" style="width:70px" aria-label="Ajustement"></td><td class="r big">${Math.round(R[id])}</td><td><input type="checkbox" data-pf="active" data-id="${esc(id)}"${p.active!==false?' checked':''} aria-label="Actif" style="min-height:24px;width:24px"></td><td><button class="warn" data-act="delP" data-id="${esc(id)}">Retirer</button></td></tr>`).join('')}</tbody></table></div>`;
+  <div class="panel"><h2>Charger le classement initial</h2><textarea id="bulk" placeholder="Un nom par ligne, du 1er au dernier"></textarea><p class="note">Un nom par ligne, du 1er au dernier : les cotes de départ vont de ${SEED_TOP} à ${SEED_BOT}. Format avancé accepté : « Nom ; cote » ou « Nom ; cote ; R » pour un remplaçant seulement. Un nom déjà présent voit sa cote de départ remplacée.</p><button class="go" data-act="bulk">Charger</button></div>
+  <div class="panel"><h2>Joueurs (${ps.length})</h2><table class="stack"><thead><tr><th>Nom</th><th class="r">Départ</th><th class="r">Ajust.</th><th class="r">Cote</th><th>Actif</th><th>Rempl.</th><th></th></tr></thead><tbody>${ps.map(([id,p])=>`<tr><td><input data-pf="name" data-id="${esc(id)}" value="${esc(p.name)}" aria-label="Nom"></td><td class="r"><input data-pf="seed" data-id="${esc(id)}" value="${esc(p.seed)}" inputmode="numeric" style="width:80px" aria-label="Cote de départ"></td><td class="r"><input data-pf="adj" data-id="${esc(id)}" value="${esc(p.adj||0)}" inputmode="numeric" style="width:70px" aria-label="Ajustement"></td><td class="r big">${Math.round(R[id])}</td><td><input type="checkbox" data-pf="active" data-id="${esc(id)}"${p.active!==false?' checked':''} aria-label="Actif" style="min-height:24px;width:24px"></td><td><input type="checkbox" data-so="${esc(id)}"${p.sub_only?' checked':''} aria-label="Remplaçant seulement" style="min-height:24px;width:24px"></td><td><button class="warn" data-act="delP" data-id="${esc(id)}">Retirer</button></td></tr>`).join('')}</tbody></table></div>`;
 }
 function render(){
   const f=document.activeElement, fid=f&&f.id, sel=f&&f.selectionStart;
@@ -650,6 +691,7 @@ document.addEventListener('change',async e=>{const t=e.target;
   if(t.id==='nightSel'){curNight=t.value;curRound=null;swapMode=false;render()}
   if(t.id==='meSel'){ls.set('pbme',t.value||null);render()}
   if(t.id==='ficheSel'){ficheId=t.value||null;render()}
+  if(t.dataset.so){await act('admin_set_sub_only',{p_id:t.dataset.so,p_flag:t.checked},t.checked?'Remplaçant seulement':'Joueur actif régulier')}
   if(t.dataset.act==='status'){const n=S.nights[t.dataset.n];if(n)await saveNight({...n,status:t.value},'Statut changé')}
   if(t.dataset.pf){const id=t.dataset.id,p={...S.players[id]};if(!S.players[id])return;let v=t.type==='checkbox'?t.checked:t.value.trim();
     if(t.dataset.pf==='seed'||t.dataset.pf==='adj'){v=Number(v);if(!isFinite(v)){toast('Nombre invalide');return}}
@@ -686,18 +728,21 @@ document.addEventListener('click',async e=>{
     if(busy)return;busy=true;let ok=false;try{await rpc('confirm_sub',{p_code:code,p_night:b.dataset.n,p_player:p});ok=true}catch(e){toast(e.message)}finally{busy=false}
     if(ok){const sent=await callReminders('remplacant',p);toast(sent?`Place confirmée, ${name(p)} a été avisé(e)`:`Place confirmée. ${name(p)} n'a pas activé les rappels : avise-le par Messenger.`);await load()}}
   if(a==='pres'||a==='cyc'){const ni=nightsSorted().find(x=>x.status==='inscription');if(!ni)return;const cur=S.rsvp[ni.id+'__'+b.dataset.p]?.status||'';
-    const s=a==='pres'?b.dataset.s:({'':'present',present:'remplacant',remplacant:'absent',absent:''}[cur]);if(a==='pres'&&s===cur)return;
+    const s=a==='pres'?b.dataset.s:(S.players[b.dataset.p]?.sub_only?{'':'remplacant',present:'absent',remplacant:'absent',absent:''}:{'':'present',present:'remplacant',remplacant:'absent',absent:''})[cur];if(a==='pres'&&s===cur)return;
     await act('set_presence',{p_night:ni.id,p_player:b.dataset.p,p_status:s||null},s?presLabel(s)+' : réponse enregistrée':'Réponse effacée')}
   if(a==='newNight'){const d=$('newDate').value;if(!d)return;if(S.nights[d]){toast('Cette soirée existe déjà');return}curNight=d;await saveNight({id:d,status:'inscription',r1:{},r2:{},wait:[],courts:0},'Soirée créée')}
   if(a==='delNight'&&await ask('Supprimer cette soirée et ses pointages? Les cotes seront recalculées.')){curNight=null;await act('admin_delete_night',{p_id:b.dataset.n},'Soirée supprimée')}
   if(a==='saveLeague'){await act('admin_set_league_code',{p_new:$('leagueSet').value},'Code de ligue changé')}
   if(a==='addP'){const nm=$('newName').value.trim(),sd=Number($('newSeed').value);if(!nm||!isFinite(sd)){toast('Nom et cote requis');return}await act('admin_upsert_player',{p_id:null,p_name:nm,p_seed:sd,p_adj:0,p_active:true},nm+' ajouté')}
-  if(a==='bulk'){const names=$('bulk').value.split('\n').map(s=>s.replace(/^\s*\d+[\.\)]?\s*/,'').trim()).filter(Boolean);if(!names.length)return;
-    if(!await ask(`Charger ${names.length} joueurs avec des cotes de ${SEED_TOP} à ${SEED_BOT}?`))return;
+  if(a==='bulk'){const lines=$('bulk').value.split('\n').map(s=>s.replace(/^\s*\d+[\.\)]\s*/,'').trim()).filter(Boolean);if(!lines.length)return;
+    const rows=lines.map(l=>{const [nm,sd,fl]=l.split(';').map(x=>(x||'').trim());return {nm,sd:sd&&isFinite(Number(sd))?Number(sd):null,so:/^r/i.test(fl||''),fmt:l.includes(';')}}).filter(r=>r.nm);
+    const plain=rows.filter(r=>r.sd==null);plain.forEach((r,i)=>r.sd=Math.round(plain.length>1?SEED_TOP-i*(SEED_TOP-SEED_BOT)/(plain.length-1):1500));
+    if(!await ask(`Charger ${rows.length} joueurs${rows.some(r=>r.so)?` dont ${rows.filter(r=>r.so).length} remplaçant(s) seulement`:''}?`))return;
     const byName=Object.fromEntries(Object.entries(S.players).map(([id,p])=>[p.name.toLowerCase(),id]));
-    busy=true;try{for(let i=0;i<names.length;i++){const sd=Math.round(names.length>1?SEED_TOP-i*(SEED_TOP-SEED_BOT)/(names.length-1):1500),ex=byName[names[i].toLowerCase()],p=ex?S.players[ex]:null;
-      await rpc('admin_upsert_player',{p_code:code,p_id:ex||null,p_name:p?p.name:names[i],p_seed:sd,p_adj:p?Number(p.adj)||0:0,p_active:p?p.active!==false:true})}
-      toast('Classement chargé')}catch(err){toast(err.message)}finally{busy=false}await load()}
+    busy=true;try{for(const r of rows){const ex=byName[r.nm.toLowerCase()],p=ex?S.players[ex]:null;
+      const id=await rpc('admin_upsert_player',{p_code:code,p_id:ex||null,p_name:p?p.name:r.nm,p_seed:r.sd,p_adj:p?Number(p.adj)||0:0,p_active:p?p.active!==false:true});
+      if(r.fmt)await rpc('admin_set_sub_only',{p_code:code,p_id:id||ex,p_flag:r.so})}
+      toast('Joueurs chargés')}catch(err){toast(err.message)}finally{busy=false}await load()}
   if(a==='delP'&&await ask(`Retirer ${name(b.dataset.id)} de la ligue? Ses pointages passés seront ignorés dans les cotes.`))await act('admin_delete_player',{p_id:b.dataset.id},'Joueur retiré');
 });
 function route(){const h=location.hash.slice(1);view=['soiree','presences','classement','fiche','admin'].includes(h)?h:'soiree';render()}
