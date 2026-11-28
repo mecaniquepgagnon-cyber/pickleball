@@ -300,7 +300,7 @@ const VAPID_PUBLIC='BCn_O8b4IIDGhoePWm5x6IMbdjBwN5kSnwRFwx_JWdUrPoKCd3dNoCWNQ6kg
 // ===========================================================
 const K=16, MAXC=8, SEED_TOP=1700, SEED_BOT=1300;
 const S={players:{},nights:{},rsvp:{},scores:{},pronos:{},admin:false,league:'',push:[],ready:0,ver:0};
-let ficheId=null;
+let ficheId=null, inPick='';
 let swReg=null, remindMsg='';
 let code=null, view='soiree', curNight=null, curRound=null, swapMode=false, swapSel=null, busy=false;
 const drafts={};
@@ -323,7 +323,7 @@ async function rpc(fn,args){
 async function load(){
   if(!code)return;
   try{
-    const st=await rpc('get_state',{p_code:code});
+    lastLoad=Date.now(); const st=await rpc('get_state',{p_code:code});
     S.admin=!!st.admin; S.league=st.league_code||''; S.push=st.push_players||[];
     S.players=Object.fromEntries(st.players.map(p=>[p.id,p]));
     S.nights=Object.fromEntries(st.nights.map(n=>[n.id,n]));
@@ -519,6 +519,25 @@ const PRES=[['present','Je serai là'],['remplacant','Disponible pour remplacer'
 const presLabel=s=>({present:'Présent',remplacant:'Remplaçant',absent:'Absent'}[s]||'Sans réponse');
 const saveNight=(n,ok)=>act('admin_save_night',{p_night:n},ok);
 
+// Échelle façon Fwango : l'ordre de départ (cotes de départ) puis, après chaque soirée terminée,
+// le 1er de chaque terrain monte et le 4e descend (positions de la ronde 2). Les absents gardent leur place.
+function ladder(){
+  if(ladder.v===S.ver&&ladder.r)return ladder.r;
+  const {R}=compute();
+  let L=Object.keys(S.players).sort((a,b)=>(Number(S.players[b].seed)||0)-(Number(S.players[a].seed)||0)||S.players[a].name.localeCompare(S.players[b].name,'fr'));
+  for(const n of Object.values(S.nights).filter(n=>n.status==='fini').sort((a,b)=>a.id.localeCompare(b.id))){
+    const r=n.r2&&Object.keys(n.r2).length?2:1, cs=n['r'+r]||{}, keys=Object.keys(cs).map(Number).sort((a,b)=>a-b), N=keys.length; if(!N)continue;
+    const rk=keys.map(c=>standings(n.id,r,c,cs[c],R).map(x=>x.id)), next=[];
+    for(let i=0;i<N;i++){const cur=rk[i],L4=cur.length;
+      const top=i===0?cur.slice(0,1):[rk[i-1][rk[i-1].length-1]], mid=cur.slice(1,L4-1), bot=i===N-1?cur.slice(L4-1):[rk[i+1][0]];
+      next.push(...top,...mid,...bot)}
+    const P=next.filter(x=>S.players[x]), set=new Set(P);
+    for(const x of P)if(!L.includes(x))L.push(x);
+    const slots=L.map((x,i)=>set.has(x)?i:-1).filter(i=>i>=0); slots.forEach((s,k)=>{L[s]=P[k]});
+  }
+  const pos=Object.fromEntries(L.map((x,i)=>[x,i+1]));
+  return ladder.v=S.ver,ladder.r={L,pos};
+}
 async function generate(n){
   const {R}=compute(), L=lineup(n.id), play=L.play;
   if(play<4){toast('Il faut au moins 4 joueurs confirmés');return}
@@ -607,7 +626,9 @@ function vSoiree(){
   h+=`<div class="bar"><button data-act="rd" data-r="1" class="${r===1?'go':''}">Ronde 1</button><button data-act="rd" data-r="2" class="${r===2?'go':''}"${Object.keys(n.r2||{}).length?'':' disabled'}>Ronde 2</button>`;
   if(S.admin&&n.status!=='fini')h+=`<button data-act="swap"${swapMode?' class="go"':''}>${swapMode?'Terminer les échanges':'Déplacer des joueurs'}</button>`;
   h+='</div>';
-  if(swapMode)h+=`<p class="note">Touche un joueur, puis un autre (ou un remplaçant) pour les échanger.</p>`;
+  if(swapMode){const onCourt=new Set([...Object.values(cs).flat(),...(n.wait||[])]),cand=Object.entries(S.players).filter(([id,p])=>p.active!==false&&!onCourt.has(id)).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
+    h+=`<div class="panel"><h2>Faire entrer un joueur</h2><div class="row"><label for="inSel">Joueur qui entre</label><select id="inSel"><option value="">Choisis un joueur</option>${cand.map(([id,p])=>`<option value="${esc(id)}"${id===inPick?' selected':''}>${esc(p.name)}${p.sub_only?' (remplaçant)':''}</option>`).join('')}</select></div><p class="note">${inPick?'Touche maintenant le joueur absent sur son terrain : il sera remplacé et placé en attente.':'Choisis le joueur qui entre, puis touche le joueur absent sur son terrain. Les pointages déjà entrés sont conservés.'}</p></div>`;
+    h+=`<p class="note">Pour échanger deux joueurs déjà présents : touche un joueur, puis un autre.</p>`}
   h+=`<div class="courts${swapMode?' swap':''}">`;
   const order=Object.keys(cs).sort((a,b)=>a-b); if(mc&&mc!=='w')order.sort((a,b)=>(b===mc)-(a===mc));
   for(const c of order){
@@ -626,6 +647,11 @@ function vSoiree(){
   }
   h+='</div>';
   {const Rm=answers(n.id,'remplacant');if(S.admin&&n.status!=='fini'&&Rm.length)h+=`<div class="panel" style="margin-top:16px"><h2>Remplaçants disponibles</h2><p class="note">Une fois confirmé, le remplaçant passe en attente; échange-le ensuite avec « Déplacer des joueurs ».</p><ul class="list">${Rm.map(x=>`<li><span>${esc(name(x.player))}</span><button class="go" data-act="confSub" data-n="${esc(n.id)}" data-p="${esc(x.player)}">Confirmer sa place</button></li>`).join('')}</ul></div>`}
+  if(S.admin){const inN=new Set([...Object.values(n.r1||{}).flat(),...Object.values(n.r2||{}).flat()]),outs=[...inN].filter(x=>S.players[x]).sort((a,b)=>name(a).localeCompare(name(b),'fr')),ins=Object.entries(S.players).filter(([id])=>!inN.has(id)).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
+    h+=`<details class="panel" style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;min-height:32px">Corriger un joueur pour toute la soirée</summary><p class="note">À utiliser quand une personne a joué à la place d'une autre dès le début (ou depuis un certain match). Tous les terrains et tous les pointages de cette soirée sont transférés au bon joueur, et les cotes sont recalculées.</p>
+    <div class="row" style="margin:6px 0"><label for="fixOut" style="min-width:130px">Inscrit par erreur</label><select id="fixOut"><option value="">Choisis</option>${outs.map(x=>`<option value="${esc(x)}">${esc(name(x))}</option>`).join('')}</select></div>
+    <div class="row" style="margin:6px 0"><label for="fixIn" style="min-width:130px">A vraiment joué</label><select id="fixIn"><option value="">Choisis</option>${ins.map(([id,p])=>`<option value="${esc(id)}">${esc(p.name)}</option>`).join('')}</select></div>
+    <button class="go" data-act="fixNight" data-n="${esc(n.id)}">Corriger toute la soirée</button></details>`}
   if(n.wait?.length)h+=`<div class="panel" style="margin-top:16px"><h2>En attente</h2><div class="ppl" style="padding:0">${n.wait.map((id,i)=>`<div class="chip${swapSel&&swapSel[0]==='w'&&swapSel[1]==i?' sel':''}" data-sw="w:${i}">${esc(name(id))}<small>${Math.round(R[id]||0)}</small></div>`).join('')}</div></div>`;
   if(n.status==='r1')h+=`<p style="margin-top:20px"><button class="go" data-act="r2"${roundDone(n,1)?'':' disabled'}>Passer à la ronde 2</button> <span class="note">${roundDone(n,1)?'Le 1er de chaque terrain monte, le 4e descend.':'Disponible quand tous les pointages de la ronde 1 sont entrés.'}</span></p>`;
   if(n.status==='r2')h+=`<p style="margin-top:20px"><button class="go" data-act="fin"${roundDone(n,2)?'':' disabled'}>Terminer la soirée</button></p>`;
@@ -691,6 +717,7 @@ document.addEventListener('change',async e=>{const t=e.target;
   if(t.id==='nightSel'){curNight=t.value;curRound=null;swapMode=false;render()}
   if(t.id==='meSel'){ls.set('pbme',t.value||null);render()}
   if(t.id==='ficheSel'){ficheId=t.value||null;render()}
+  if(t.id==='inSel'){inPick=t.value;swapSel=null;render()}
   if(t.dataset.so){await act('admin_set_sub_only',{p_id:t.dataset.so,p_flag:t.checked},t.checked?'Remplaçant seulement':'Joueur actif régulier')}
   if(t.dataset.act==='status'){const n=S.nights[t.dataset.n];if(n)await saveNight({...n,status:t.value},'Statut changé')}
   if(t.dataset.pf){const id=t.dataset.id,p={...S.players[id]};if(!S.players[id])return;let v=t.type==='checkbox'?t.checked:t.value.trim();
@@ -703,6 +730,9 @@ document.addEventListener('click',async e=>{
   if(e.target.id==='logout'){code=null;ls.set('pbcode',null);S.ready=0;S.admin=false;render();return}
   const chip=e.target.closest('[data-sw]');
   if(chip&&swapMode){const [a,b]=chip.dataset.sw.split(':'),p=[a,Number(b)],n=S.nights[curNight];
+    if(inPick&&p[0]!=='w'){const g=JSON.parse(JSON.stringify(n)),court=g['r'+curRound][p[0]],old=court[p[1]],nw=inPick;
+      if(!await ask(`Remplacer ${name(old)} par ${name(nw)} au terrain ${p[0]}?`))return;
+      court[p[1]]=nw;g.wait=(g.wait||[]).filter(x=>x!==nw).concat([old]);inPick='';swapSel=null;await saveNight(g,`${name(nw)} remplace ${name(old)}`);return}
     if(!swapSel){swapSel=p;render();return} const x=swapSel;swapSel=null;
     if(x[0]===p[0]&&x[1]===p[1]){render();return} await doSwap(n,curRound,x,p); return}
   const b=e.target.closest('[data-act]');if(!b||b.tagName==='SELECT')return;const a=b.dataset.act,n=S.nights[curNight];
@@ -721,6 +751,9 @@ document.addEventListener('click',async e=>{
   if(a==='fin'&&await ask('Terminer la soirée? Les cotes et les trophées seront calculés.')){await act('advance',{p_night:n.id,p_status:'fini',p_r2:{}},'Soirée terminée');if(S.admin&&S.nights[n.id]?.status==='fini')await announce(n.id)}
   if(a==='annTroph'&&await ask('Envoyer une notification à tous avec les gagnants des trophées?'))await announce(b.dataset.n);
   if(a==='deco'){setDeco(b.dataset.d);return}
+  if(a==='fixNight'){const o=$('fixOut').value,w=$('fixIn').value;if(!o||!w){toast('Choisis les deux joueurs');return}
+    if(!await ask(`Attribuer à ${name(w)} toute la soirée de ${name(o)} (terrains et pointages)? ${name(o)} sera marqué absent.`))return;
+    await act('admin_replace_in_night',{p_night:b.dataset.n,p_old:o,p_new:w},'Soirée corrigée');return}
   if(a==='fiche'){ficheId=b.dataset.p;location.hash='#fiche';return}
   if(a==='prono'){const v=k=>$('pr-'+k).value||null;await act('set_prono',{p_night:b.dataset.n,p_player:b.dataset.p,p_ja:v('ja'),p_lb:v('lb'),p_mr:v('mr')},'Pronostics enregistrés');return}
   if(a==='copyRecap'){const t=messengerRecap(b.dataset.n);try{await navigator.clipboard.writeText(t);toast('Résumé copié, colle-le dans Messenger')}catch(x){remindMsg=t;toast('Copie impossible ici: le texte est dans Admin > Rappels')}return}
@@ -746,9 +779,14 @@ document.addEventListener('click',async e=>{
   if(a==='delP'&&await ask(`Retirer ${name(b.dataset.id)} de la ligue? Ses pointages passés seront ignorés dans les cotes.`))await act('admin_delete_player',{p_id:b.dataset.id},'Joueur retiré');
 });
 function route(){const h=location.hash.slice(1);view=['soiree','presences','classement','fiche','admin'].includes(h)?h:'soiree';render()}
-addEventListener('hashchange',route);
+addEventListener('hashchange',()=>{route();if(Date.now()-lastLoad>30000)load()});
 // Rafraîchit toutes les 8 secondes, sauf pendant qu'on tape un pointage.
-setInterval(()=>{if(code&&!busy&&document.visibilityState==='visible'&&!(document.activeElement&&document.activeElement.tagName==='INPUT'))load()},8000);
+// Rafraîchissement automatique économe (un match dure de 10 à 15 minutes) :
+// toutes les 2 min pendant une ronde en cours, toutes les 15 min autrement,
+// et aussi à chaque retour dans l'application, changement d'onglet et action enregistrée.
+let lastLoad=0;
+setInterval(()=>{if(!code||busy||document.visibilityState!=='visible'||(document.activeElement&&document.activeElement.tagName==='INPUT'))return;
+  const live=Object.values(S.nights).some(n=>n.status==='r1'||n.status==='r2');if(Date.now()-lastLoad>=(live?120000:900000))load()},10000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')load()});
 function setDeco(d){if(!['arene','terrain','epure'].includes(d))d='arene';document.body.dataset.deco=d;ls.set('pbdeco',d);for(const x of document.querySelectorAll('footer.deco button'))x.classList.toggle('on',x.dataset.d===d);const m=document.querySelector('meta[name=theme-color]');if(m)m.content=d==='epure'?'#0b0b0f':d==='arene'?'#0a1430':'#1a4f8f'}
 setDeco(ls.get('pbdeco')||'arene');
