@@ -67,6 +67,7 @@ th{font-size:14px;color:var(--mute);font-weight:600}
 td.r,th.r{text-align:right;white-space:nowrap}
 .big{font-family:"Barlow Condensed";font-size:22px}
 .plus{color:var(--up)}.minus{color:var(--down)}
+.panel.banner{border:2px solid var(--ball)}
 .panel{border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:16px;background:var(--card)}
 .panel h2{margin:0 0 10px;font-size:26px}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -594,6 +595,33 @@ async function callReminders(type,player){
 }
 async function announce(nid){const txt=trophyText(nid);if(!txt)return;
   try{const r=await fetch(`${SUPABASE_URL}/functions/v1/rappels`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code,type:'annonce',title:'Les trophées de la soirée!',body:txt})});const j=await r.json();if(j.error)throw new Error(j.error);toast(`Trophées annoncés à ${j.sent} téléphone(s)`)}catch(e){toast('Annonce impossible: '+e.message)}}
+// Bandeau d'installation et de rappels : visible sur téléphone tant que l'application n'est pas installée
+// ou que les rappels ne sont pas activés. « Plus tard » le cache 3 jours.
+const isMobile=isIOS||/Android|Mobi/i.test(navigator.userAgent), isAndroid=/Android/i.test(navigator.userAgent);
+const inAppBrowser=/FBAN|FBAV|FB_IAB|FBIOS|Messenger|Instagram|Line\//i.test(navigator.userAgent);
+let installEvt=null;
+addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e;if(code&&S.ready)render()});
+addEventListener('appinstalled',()=>{installEvt=null;toast('Application installée! Ouvre-la à partir de son icône.');render()});
+function pushIsOn(){const me=ls.get('pbme');return !!(me&&ls.get('pbpush')===me&&typeof Notification!=='undefined'&&Notification.permission==='granted')}
+function banner(){
+  if(!isMobile||Number(ls.get('pbbanner')||0)>Date.now())return '';
+  const later='<button data-act="bannerLater">Plus tard</button>';
+  if(!standalone){
+    let how;
+    if(inAppBrowser)how=`Tu es dans le navigateur de Messenger, qui ne permet pas d'installer l'application. Touche <b>⋯</b> en haut à droite, puis <b>${isIOS?'Ouvrir dans Safari':'Ouvrir dans Chrome'}</b> (ou « Ouvrir dans le navigateur »).`;
+    else if(isIOS)how='Touche le bouton <b>Partager</b> (le carré avec une flèche vers le haut), puis <b>Sur l\'écran d\'accueil</b>, puis <b>Ajouter</b>.';
+    else if(installEvt)how='Touche le bouton ci-dessous, puis confirme.';
+    else how='Touche <b>⋮</b> en haut à droite du navigateur, puis <b>Installer l\'application</b> ou <b>Ajouter à l\'écran d\'accueil</b>.';
+    return `<div class="panel banner"><h2 style="margin-top:0">Installe l'application de la ligue</h2><p>L'application s'ouvre d'un seul geste à partir de son icône et elle te permet de recevoir les rappels automatiques pour confirmer ta présence.</p><p>${how}</p><p class="note">Ensuite, ouvre l'application à partir de la nouvelle icône et active les rappels.</p><div class="row">${!inAppBrowser&&!isIOS&&installEvt?'<button class="go" data-act="install">Installer l\'application</button>':''}${later}</div></div>`;
+  }
+  if(!pushOK||pushIsOn())return '';
+  if(typeof Notification!=='undefined'&&Notification.permission==='denied')
+    return `<div class="panel banner"><h2 style="margin-top:0">Rappels bloqués</h2><p>Les notifications de l'application sont bloquées sur ce téléphone. Pour recevoir les rappels, permets les notifications de l'application dans les réglages du téléphone, puis rouvre-la.</p><div class="row">${later}</div></div>`;
+  const me=ls.get('pbme'), act=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
+  return `<div class="panel banner"><h2 style="margin-top:0">Active les rappels automatiques</h2><p>Reçois une notification le mardi soir, puis le jeudi midi si tu n'as pas encore confirmé ta présence. Tu reçois aussi l'avis quand un administrateur confirme ta place comme remplaçant.</p>
+  ${me?'':`<div class="row" style="margin-bottom:10px"><label for="bnMe">Je suis</label><select id="bnMe"><option value="">Choisis ton nom</option>${act.map(([id,p])=>`<option value="${esc(id)}">${esc(p.name)}</option>`).join('')}</select></div>`}
+  <div class="row"><button class="go" data-act="pushOn"${me?'':' disabled'}>Activer les rappels</button>${later}</div></div>`;
+}
 function remindPanel(){
   const me=ls.get('pbme'), on=ls.get('pbpush')&&ls.get('pbpush')===me&&typeof Notification!=='undefined'&&Notification.permission==='granted';
   let t='<div class="panel"><h2>Rappels sur ton téléphone</h2>';
@@ -855,7 +883,7 @@ function render(){
   const n=nightsSorted()[0]; $('sub').textContent=code&&n?`Dernière soirée: ${fmtDate(n.id)}`:'8 terrains, montée et descente, cote Elo';
   if(!code){$('app').innerHTML=vLogin();return}
   if(!S.ready){$('app').innerHTML='<p class="note">Chargement de la ligue…</p>';return}
-  $('app').innerHTML={soiree:vSoiree,presences:vPresences,classement:vClassement,fiche:vFiche,ligue:vLigue,admin:vAdmin}[view]();
+  $('app').innerHTML=banner()+{soiree:vSoiree,presences:vPresences,classement:vClassement,fiche:vFiche,ligue:vLigue,admin:vAdmin}[view]();
   if(fid&&$(fid)){const e=$(fid);e.focus();try{e.setSelectionRange(sel,sel)}catch(x){}}
 }
 
@@ -864,7 +892,7 @@ document.addEventListener('submit',async e=>{if(e.target.id!=='login')return;e.p
 document.addEventListener('input',e=>{const t=e.target;if(t.dataset.k&&t.dataset.f){drafts[t.dataset.k]={...(drafts[t.dataset.k]||{}),[t.dataset.f]:t.value,open:true}}});
 document.addEventListener('change',async e=>{const t=e.target;
   if(t.id==='nightSel'){curNight=t.value;curRound=null;swapMode=false;render()}
-  if(t.id==='meSel'){ls.set('pbme',t.value||null);render()}
+  if(t.id==='meSel'||t.id==='bnMe'){ls.set('pbme',t.value||null);render()}
   if(t.id==='ficheSel'){ficheId=t.value||null;render()}
   if(t.id==='saisonSel'){saisonSel=t.value;ls.set('pbsaison',t.value);render()}
   if(t.id==='inSel'){inPick=t.value;swapSel=null;render()}
@@ -890,6 +918,8 @@ document.addEventListener('click',async e=>{
     if(x[0]===p[0]&&x[1]===p[1]){render();return} await doSwap(n,curRound,x,p); return}
   const b=e.target.closest('[data-act]');if(!b||b.tagName==='SELECT')return;const a=b.dataset.act,n=S.nights[curNight];
   if(a==='pushOn')await enablePush();
+  if(a==='bannerLater'){ls.set('pbbanner',String(Date.now()+3*864e5));render();toast('Je te le rappellerai dans 3 jours')}
+  if(a==='install'&&installEvt){installEvt.prompt();try{await installEvt.userChoice}catch(x){}installEvt=null;render()}
   if(a==='pushOff')await disablePush();
   if(a==='remindMsg'){remindMsg=buildRemind();render();if(remindMsg)try{await navigator.clipboard.writeText(remindMsg);toast('Message copié, colle-le dans Messenger')}catch(x){toast('Sélectionne le texte et copie-le')}}
   if(a==='remindCopy'){try{await navigator.clipboard.writeText($('remindTxt').value);toast('Message copié')}catch(x){$('remindTxt').select();toast('Texte sélectionné, copie-le')}}
