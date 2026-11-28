@@ -312,7 +312,7 @@ const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ls={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}}};
 function toast(t){const e=$('toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('on'),2600)}
-function ask(txt){return new Promise(res=>{const d=$('dlg');$('dlgTxt').textContent=txt;d.showModal();$('dlgYes').onclick=()=>{d.close();res(true)};$('dlgNo').onclick=()=>{d.close();res(false)}})}
+function ask(txt,yes='Confirmer'){return new Promise(res=>{const d=$('dlg');$('dlgTxt').textContent=txt;$('dlgYes').textContent=yes;d.showModal();$('dlgYes').onclick=()=>{d.close();res(true)};$('dlgNo').onclick=()=>{d.close();res(false)}})}
 const fmtDate=id=>{const [y,m,d]=id.split('-').map(Number);return new Date(y,m-1,d).toLocaleDateString('fr-CA',{weekday:'long',day:'numeric',month:'long'})};
 function nextThursday(){const d=new Date();d.setDate(d.getDate()+((4-d.getDay()+7)%7));const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`}
 const name=id=>S.players[id]?.name||'Joueur retiré';
@@ -328,7 +328,7 @@ async function load(){
   if(!code)return;
   try{
     lastLoad=Date.now(); const st=await rpc('get_state',{p_code:code});
-    S.admin=!!st.admin; S.league=st.league_code||''; S.push=st.push_players||[]; S.season=st.season||{}; S.rules=st.rules||''; S.comments=st.comments||[];
+    S.admin=!!st.admin; S.league=st.league_code||''; S.push=st.push_players||[]; S.season=st.season||{}; S.rules=st.rules||''; if(st.blocs&&st.blocs.length){BLOCS=st.blocs.map(b=>({first:String(b.first).slice(0,10),last:String(b.last).slice(0,10)})).sort((a,b)=>a.first.localeCompare(b.first));SAISONS=mkSaisons()} FERMES=st.fermes||[]; S.comments=st.comments||[];
     S.players=Object.fromEntries(st.players.map(p=>[p.id,p]));
     S.nights=Object.fromEntries(st.nights.map(n=>[n.id,n]));
     S.rsvp=Object.fromEntries(st.rsvp.map(r=>[r.night+'__'+r.player,r]));
@@ -614,13 +614,15 @@ function easterDate(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4
 const isoLocal=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 const addD=(s,n)=>{const [y,m,j]=s.split('-').map(Number);return isoLocal(new Date(y,m-1,j+n))};
 // Blocs de la ligue (jeudis) : automne 2026 du 10 septembre au 17 décembre, hiver-printemps 2027 du 7 janvier au 10 juin.
-// Les dates inscrites dans Admin > Saison, si présentes, ont priorité.
-const BLOCS=[{first:'2026-09-10',last:'2026-12-17'},{first:'2027-01-07',last:'2027-06-10'}];
+// Ces valeurs servent de départ; le calendrier enregistré dans Admin > Calendrier les remplace.
+let BLOCS=[{first:'2026-09-10',last:'2026-12-17'},{first:'2027-01-07',last:'2027-06-10'}], FERMES=[];
+const saisonLabel=f=>(Number(f.slice(5,7))>=7?'Automne ':'Hiver-printemps ')+f.slice(0,4);
 // Saisons pour les statistiques : chaque bloc va jusqu'à la veille du bloc suivant.
-const SAISONS=BLOCS.map((b,i)=>{const y=b.first.slice(0,4),m=Number(b.first.slice(5,7));return{k:b.first,label:(m>=7?'Automne ':'Hiver-printemps ')+y,from:i===0?'0000-01-01':b.first,to:BLOCS[i+1]?addD(BLOCS[i+1].first,-1):'9999-12-31'}});
+const mkSaisons=()=>BLOCS.map((b,i)=>({k:b.first,label:saisonLabel(b.first),from:i===0?'0000-01-01':b.first,to:BLOCS[i+1]?addD(BLOCS[i+1].first,-1):'9999-12-31'}));
+let SAISONS=mkSaisons();
 const curSaison=()=>{const d=isoLocal(new Date());return (SAISONS.find(s=>d>=s.from&&d<=s.to)||SAISONS[SAISONS.length-1]).k};
 let saisonSel=ls.get('pbsaison')||'';
-const skNow=()=>saisonSel||curSaison();
+const skNow=()=>saisonSel&&(saisonSel==='all'||SAISONS.some(x=>x.k===saisonSel))?saisonSel:curSaison();
 const inSaison=(d,k)=>{if(k==='all')return true;const s=SAISONS.find(x=>x.k===k);return !s||(d>=s.from&&d<=s.to)};
 const saisonPicker=()=>`<div class="row" style="margin-bottom:12px"><label for="saisonSel">Saison</label><select id="saisonSel">${SAISONS.map(s=>`<option value="${s.k}"${skNow()===s.k?' selected':''}>${s.label}</option>`).join('')}<option value="all"${skNow()==='all'?' selected':''}>Toutes les saisons</option></select></div>`;
 function blocFor(d){const s=S.season||{};if(s.first||s.last)return s;return BLOCS.find(b=>d<=addD(b.last,3))||{}}
@@ -805,13 +807,39 @@ function comPanel(){
   const when=c=>new Date(c.created).toLocaleString('fr-CA',{day:'numeric',month:'long',hour:'numeric',minute:'2-digit'});
   return `<div class="panel"><h2>Commentaires des joueurs${u?` (${u} non lu${u>1?'s':''})`:''}</h2>${C.length?`<ul class="list">${C.map(c=>`<li style="display:block${c.lu?';opacity:.65':''}"><p style="margin:0 0 4px"><strong>${c.player?esc(name(c.player)):'Sans nom'}</strong> <span class="note">${esc(when(c))}</span>${c.lu?'':' <span class="pill">Nouveau</span>'}</p><p style="margin:0 0 8px;white-space:pre-wrap">${esc(c.body)}</p><div class="row"><button data-act="com" data-c="${c.id}" data-do="${c.lu?'nonlu':'lu'}">${c.lu?'Marquer non lu':'Marquer lu'}</button><button class="warn" data-act="com" data-c="${c.id}" data-do="supprimer">Supprimer</button></div></li>`).join('')}</ul>`:'<p class="note">Aucun commentaire pour l\'instant.</p>'}</div>`;
 }
+const STATUTS={inscription:'Inscription',r1:'Ronde 1',r2:'Ronde 2',fini:'Terminée'};
+let allNights=false, calEdit=null;
+const todayIso=()=>isoLocal(new Date());
+function nightsPanel(){
+  const ns=nightsSorted(), t=todayIso(), next=[...ns].reverse().find(n=>n.id>=t), last=ns.find(n=>n.id<t);
+  const li=(n,tag)=>`<li><span>${tag?`<span class="note" style="display:block">${tag}</span>`:''}${esc(fmtDate(n.id))}</span><span class="row"><select data-act="status" data-n="${esc(n.id)}" aria-label="Étape">${Object.entries(STATUTS).map(([k,v])=>`<option value="${k}"${n.status===k?' selected':''}>${v}</option>`).join('')}</select><button class="warn" data-act="delNight" data-n="${esc(n.id)}">Supprimer</button></span></li>`;
+  const list=allNights?ns.map(n=>li(n,n===next?'Prochaine soirée':n===last?'Dernière soirée':'')):[next&&li(next,'Prochaine soirée'),last&&li(last,'Dernière soirée')].filter(Boolean);
+  return `<div class="panel"><h2>Soirées</h2>${list.length?`<ul class="list">${list.join('')}</ul>`:'<p class="note">Aucune soirée pour l\'instant.</p>'}
+  ${ns.length>2||allNights?`<button data-act="allNights" style="margin-top:10px">${allNights?'Voir seulement la prochaine et la dernière':`Voir toutes les soirées (${ns.length})`}</button>`:''}
+  <h3 style="margin:18px 0 6px">Ajouter une soirée spéciale</h3><p class="note" style="margin-top:0">Les jeudis de la saison se créent tout seuls. Ceci sert pour une reprise, un autre jour ou une soirée hors saison.</p><div class="row"><input type="date" id="newDate" aria-label="Date"><button data-act="newNight">Ajouter</button></div></div>`;
+}
+const fmtCourt=d=>{const [y,m,j]=d.split('-').map(Number);return new Date(y,m-1,j).toLocaleDateString('fr-CA',{day:'numeric',month:'long'})};
+const isThu=d=>{const [y,m,j]=d.split('-').map(Number);return new Date(y,m-1,j).getDay()===4};
+function calPanel(){
+  if(calEdit){const c=calEdit;
+    return `<div class="panel"><h2>Calendrier</h2><p class="note">Les soirées du jeudi sont créées automatiquement entre la première et la dernière soirée de chaque saison, sauf les jeudis fermés.</p>
+    ${c.blocs.map((b,i)=>`<h3 style="margin:14px 0 6px">${b.first?esc(saisonLabel(b.first)):'Nouvelle saison'}</h3><div class="row"><label for="cf${i}">Première soirée</label><input type="date" id="cf${i}" data-cal="first" data-i="${i}" value="${esc(b.first)}"><label for="cl${i}">Dernière soirée</label><input type="date" id="cl${i}" data-cal="last" data-i="${i}" value="${esc(b.last)}">${c.blocs.length>1?`<button class="warn" data-act="calDelBloc" data-i="${i}">Retirer</button>`:''}</div>`).join('')}
+    <button data-act="calAddBloc" style="margin-top:10px">+ Ajouter une saison</button>
+    <h3 style="margin:18px 0 6px">Jeudis fermés</h3>${c.fermes.length?`<ul class="list">${c.fermes.map((d,i)=>`<li><span>${esc(fmtDate(d))}</span><button data-act="calDelFerme" data-i="${i}">Rouvrir</button></li>`).join('')}</ul>`:'<p class="note">Aucun pour l\'instant.</p>'}
+    <div class="row" style="margin-top:8px"><input type="date" id="calFerme" aria-label="Jeudi à fermer"><button data-act="calAddFerme">Fermer ce jeudi</button></div>
+    <div class="row" style="margin-top:16px"><button class="go" data-act="calSave">Enregistrer</button><button data-act="calCancel">Annuler</button></div></div>`}
+  const t=todayIso(), cur=BLOCS.find(b=>t<=addD(b.last,3)), nxt=cur&&BLOCS[BLOCS.indexOf(cur)+1], f=FERMES.filter(d=>d>=t);
+  const per=b=>`${fmtCourt(b.first)} au ${fmtCourt(b.last)}`;
+  return `<div class="panel"><h2>Calendrier</h2>${cur?`<p style="margin:0 0 4px"><strong>${esc(saisonLabel(cur.first))}</strong> : ${esc(per(cur))}</p>`:'<p style="margin:0 0 4px"><strong>Aucune saison à venir</strong></p>'}
+  ${nxt?`<p class="note" style="margin:0 0 4px">Ensuite : ${esc(saisonLabel(nxt.first))}, du ${esc(per(nxt))}</p>`:''}
+  <p class="note" style="margin:0 0 12px">Jeudis fermés : ${f.length?f.map(d=>esc(fmtCourt(d))).join(', '):'aucun'}</p><button data-act="calEdit">Modifier le calendrier</button></div>`;
+}
+function calRead(){if(!calEdit)return;for(const e of document.querySelectorAll('[data-cal]'))calEdit.blocs[Number(e.dataset.i)][e.dataset.cal]=e.value}
 function vAdmin(){
   if(!S.admin)return `<p>Section réservée à l'organisateur.</p>`;
   const {R}=compute(), ps=Object.entries(S.players).sort((a,b)=>R[b[0]]-R[a[0]]), ns=nightsSorted();
   const low=ps.filter(([,p])=>p.active!==false).reduce((m,[id])=>Math.min(m,R[id]),Infinity);
-  return comPanel()+`<div class="panel"><h2>Soirées</h2><div class="row"><input type="date" id="newDate" value="${nextThursday()}" aria-label="Date"><button class="go" data-act="newNight">Créer la soirée</button></div>
-  <ul class="list" style="margin-top:10px">${ns.map(n=>`<li><span>${esc(fmtDate(n.id))}</span><span class="row"><select data-act="status" data-n="${esc(n.id)}" aria-label="Statut">${['inscription','r1','r2','fini'].map(s=>`<option value="${s}"${n.status===s?' selected':''}>${{inscription:'Inscription',r1:'Ronde 1',r2:'Ronde 2',fini:'Terminée'}[s]}</option>`).join('')}</select><button class="warn" data-act="delNight" data-n="${esc(n.id)}">Supprimer</button></span></li>`).join('')}</ul></div>
-  <div class="panel"><h2>Saison</h2><div class="row"><label for="sFirst">Première soirée</label><input type="date" id="sFirst" value="${esc(S.season?.first||'')}"><label for="sLast">Dernière soirée</label><input type="date" id="sLast" value="${esc(S.season?.last||'')}"><button class="go" data-act="saveSeason">Enregistrer</button></div><p class="note">Facultatif : laisse vide pour utiliser le calendrier des blocs déjà programmé (automne 2026 : 10 septembre au 17 décembre; hiver-printemps 2027 : 7 janvier au 10 juin). Sert aux messages de début et de fin de saison.</p></div>
+  return comPanel()+nightsPanel()+calPanel()+`
   <div class="panel"><h2>Rappels</h2><p>${S.push.length} joueur(s) ont activé les rappels sur leur téléphone${S.push.length?': '+S.push.map(id=>esc(name(id))).join(', '):''}.</p><p class="note">Envoi automatique le mardi vers 18 h et le jeudi vers midi, seulement à ceux qui n'ont pas confirmé.</p>
   <div class="row"><button class="go" data-act="remindMsg">Préparer le message Messenger</button><button data-act="remindNow">Envoyer le rappel maintenant</button><button data-act="remindTest">M'envoyer un test</button></div>
   ${remindMsg?`<textarea id="remindTxt" style="margin-top:10px">${esc(remindMsg)}</textarea><button data-act="remindCopy">Copier</button>`:''}</div>
@@ -841,7 +869,10 @@ document.addEventListener('change',async e=>{const t=e.target;
   if(t.id==='saisonSel'){saisonSel=t.value;ls.set('pbsaison',t.value);render()}
   if(t.id==='inSel'){inPick=t.value;swapSel=null;render()}
   if(t.dataset.so){await act('admin_set_sub_only',{p_id:t.dataset.so,p_flag:t.checked},t.checked?'Remplaçant seulement':'Joueur actif régulier')}
-  if(t.dataset.act==='status'){const n=S.nights[t.dataset.n];if(n)await saveNight({...n,status:t.value},'Statut changé')}
+  if(t.dataset.act==='status'){const n=S.nights[t.dataset.n];if(!n)return;const to=t.value,from=n.status;
+    const eff={inscription:'Les joueurs pourront de nouveau changer leur présence.',r1:'Les pointages de la ronde 1 pourront être entrés ou corrigés.',r2:'Les pointages de la ronde 2 pourront être entrés ou corrigés.',fini:'Les cotes et les trophées seront calculés avec les pointages entrés.'}[to];
+    const msg=`Passer la soirée du ${fmtDate(n.id)} de « ${STATUTS[from]} » à « ${STATUTS[to]} »? ${eff}${from==='fini'?' Les trophées de cette soirée seront retirés jusqu\'à ce qu\'elle soit terminée de nouveau.':''}`;
+    if(!await ask(msg)){render();return} await saveNight({...n,status:to},'Étape changée')}
   if(t.dataset.pf){const id=t.dataset.id,p={...S.players[id]};if(!S.players[id])return;let v=t.type==='checkbox'?t.checked:t.value.trim();
     if(t.dataset.pf==='seed'||t.dataset.pf==='adj'){v=Number(v);if(!isFinite(v)){toast('Nombre invalide');return}}
     if(t.dataset.pf==='name'&&!v)return; p[t.dataset.pf]=v;
@@ -873,7 +904,6 @@ document.addEventListener('click',async e=>{
   if(a==='fin'&&await ask('Terminer la soirée? Les cotes et les trophées seront calculés.')){await act('advance',{p_night:n.id,p_status:'fini',p_r2:{}},'Soirée terminée');if(S.admin&&S.nights[n.id]?.status==='fini'){await announce(n.id);await tierPushes(n.id)}}
   if(a==='annTroph'&&await ask('Envoyer une notification à tous avec les gagnants des trophées?'))await announce(b.dataset.n);
   if(a==='deco'){setDeco(b.dataset.d);return}
-  if(a==='saveSeason'){await act('admin_set_season',{p_first:$('sFirst').value,p_last:$('sLast').value},'Dates de saison enregistrées');return}
   if(a==='fixNight'){const o=$('fixOut').value,w=$('fixIn').value;if(!o||!w){toast('Choisis les deux joueurs');return}
     if(!await ask(`Attribuer à ${name(w)} toute la soirée de ${name(o)} (terrains et pointages)? ${name(o)} sera marqué absent.`))return;
     await act('admin_replace_in_night',{p_night:b.dataset.n,p_old:o,p_new:w},'Soirée corrigée');return}
@@ -894,8 +924,28 @@ document.addEventListener('click',async e=>{
   if(a==='pres'||a==='cyc'){const ni=[...nightsSorted()].reverse().find(x=>x.status==='inscription');if(!ni)return;const cur=S.rsvp[ni.id+'__'+b.dataset.p]?.status||'';
     const s=a==='pres'?b.dataset.s:(S.players[b.dataset.p]?.sub_only?{'':'remplacant',present:'absent',remplacant:'absent',absent:''}:{'':'present',present:'remplacant',remplacant:'absent',absent:''})[cur];if(a==='pres'&&s===cur)return;
     await act('set_presence',{p_night:ni.id,p_player:b.dataset.p,p_status:s||null},s?presLabel(s)+' : réponse enregistrée':'Réponse effacée')}
-  if(a==='newNight'){const d=$('newDate').value;if(!d)return;if(S.nights[d]){toast('Cette soirée existe déjà');return}curNight=d;await saveNight({id:d,status:'inscription',r1:{},r2:{},wait:[],courts:0},'Soirée créée')}
-  if(a==='delNight'&&await ask('Supprimer cette soirée et ses pointages? Les cotes seront recalculées.')){curNight=null;await act('admin_delete_night',{p_id:b.dataset.n},'Soirée supprimée')}
+  if(a==='newNight'){const d=$('newDate').value;if(!d){toast('Choisis une date');return}if(S.nights[d]){toast('Cette soirée existe déjà');return}curNight=d;await saveNight({id:d,status:'inscription',r1:{},r2:{},wait:[],courts:0},'Soirée spéciale ajoutée')}
+  if(a==='delNight'){const id=b.dataset.n,nb=Object.values(S.scores).filter(x=>x.night===id).length,auto=id>=todayIso()&&isThu(id)&&BLOCS.some(x=>id>=x.first&&id<=x.last)&&!FERMES.includes(id);
+    const tip=auto?' Note : c\'est un jeudi de la saison, il sera recréé automatiquement. Pour annuler ce jeudi, ferme-le plutôt dans le Calendrier.':'';
+    if(!await ask(`Supprimer la soirée du ${fmtDate(id)}?${nb?'':' Elle n\'a aucun pointage.'}${tip}`,'Supprimer'))return;
+    if(nb&&!await ask(`Attention : cette soirée contient ${nb} pointage${nb>1?'s':''}. ${nb>1?'Ils seront effacés':'Il sera effacé'} définitivement, avec les présences. Les cotes de tous les joueurs seront recalculées comme si la soirée n'avait jamais eu lieu, et les trophées, badges et faits saillants de cette soirée disparaîtront. Cette action est irréversible.`,'Supprimer définitivement'))return;
+    curNight=null;await act('admin_delete_night',{p_id:id},'Soirée supprimée')}
+  if(a==='allNights'){allNights=!allNights;render()}
+  if(a==='calEdit'){calEdit={blocs:BLOCS.map(x=>({...x})),fermes:[...FERMES]};render()}
+  if(a==='calCancel'){calEdit=null;render()}
+  if(a==='calAddBloc'){calRead();calEdit.blocs.push({first:'',last:''});render()}
+  if(a==='calDelBloc'){calRead();{const x=calEdit.blocs[Number(b.dataset.i)];if(x.first&&x.first<todayIso()&&!await ask('Retirer cette saison du calendrier? Ses soirées déjà jouées restent, mais leurs statistiques seront regroupées avec la saison précédente dans le Classement et Ma fiche.','Retirer'))return}calEdit.blocs.splice(Number(b.dataset.i),1);render()}
+  if(a==='calDelFerme'){calRead();calEdit.fermes.splice(Number(b.dataset.i),1);render()}
+  if(a==='calAddFerme'){calRead();const d=$('calFerme').value;if(!d){toast('Choisis une date');return}if(!isThu(d)){toast('Cette date n\'est pas un jeudi');return}
+    if(!calEdit.fermes.includes(d))calEdit.fermes=[...calEdit.fermes,d].sort();render()}
+  if(a==='calSave'){calRead();const bl=calEdit.blocs.filter(x=>x.first||x.last);
+    if(!bl.length){toast('Il faut au moins une saison');return}
+    if(bl.some(x=>!x.first||!x.last)){toast('Chaque saison doit avoir une première et une dernière soirée');return}
+    if(bl.some(x=>x.first>x.last)){toast('Une saison finit avant de commencer : vérifie les dates');return}
+    bl.sort((x,y)=>x.first.localeCompare(y.first));for(let k=1;k<bl.length;k++)if(bl[k].first<=bl[k-1].last){toast('Deux saisons se chevauchent : vérifie les dates');return}
+    const closing=calEdit.fermes.filter(d=>!FERMES.includes(d)&&S.nights[d]);
+    if(closing.length&&!await ask(`La soirée du ${closing.map(fmtDate).join(', ')} existe déjà. Si personne n'a encore joué, elle sera retirée avec les présences déjà reçues. Continuer?`))return;
+    if(busy)return;busy=true;try{await rpc('admin_set_calendar',{p_code:code,p_blocs:bl,p_fermes:calEdit.fermes});calEdit=null;toast('Calendrier enregistré')}catch(x){toast(x.message)}finally{busy=false}await load()}
   if(a==='saveLeague'){await act('admin_set_league_code',{p_new:$('leagueSet').value},'Code de ligue changé')}
   if(a==='addP'){const nm=$('newName').value.trim(),sd=Number($('newSeed').value);if(!nm||!isFinite(sd)){toast('Nom et cote requis');return}await act('admin_upsert_player',{p_id:null,p_name:nm,p_seed:sd,p_adj:0,p_active:true},nm+' ajouté')}
   if(a==='bulk'){const lines=$('bulk').value.split('\n').map(s=>s.replace(/^\s*\d+[\.\)]\s*/,'').trim()).filter(Boolean);if(!lines.length)return;
