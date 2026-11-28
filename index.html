@@ -251,6 +251,7 @@ button.lnk:focus-visible{outline:3px solid var(--ball)}
 .tierbar{height:12px;border-radius:99px;background:var(--line);overflow:hidden;margin-top:14px}.tierbar div{height:100%;background:var(--tc)}
 .fh{font-size:20px;margin:18px 0 8px}
 .spark{width:100%;height:100px;display:block;color:var(--ball)}
+.spark.cote{height:auto;overflow:visible}.spark .ax{fill:var(--mute);font-size:11px;font-family:inherit;filter:none}
 .sparkl{display:flex;justify-content:space-between;font-size:13px;color:var(--mute)}
 .duo{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));margin-top:14px}.duo .panel{margin:0}
 .badges{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
@@ -348,6 +349,8 @@ async function act(fn,args,ok){if(busy)return;busy=true;try{await rpc(fn,{p_code
 // mise à jour en lot (cotes du début de soirée, ordre des matchs sans effet),
 // K de 48 pendant les 12 premiers matchs d'un joueur puis 16, K du match = moyenne des 4 joueurs (somme nulle, partenaires égaux).
 const K_NEW=48, K_EST=16, N_PROV=12;
+// Fiabilité de la cote : 100 % pour les joueurs établis; pour un nouveau joueur, elle monte avec chaque match jusqu'à 12 matchs.
+const fiTag=t=>t&&t.fi<1?` <span class="tier" style="--tc:#8fa3bd" title="La cote d'un nouveau joueur bouge plus vite jusqu'à 12 matchs">Fiabilité ${Math.round(t.fi*100)} %</span>`:'';
 // Les joueurs déjà inscrits avant la première soirée (classement repris de la saison en cours) sont établis dès le départ :
 // seuls les joueurs ajoutés après la première soirée ont le K provisoire.
 function isNew(p){const first=Object.keys(S.nights).sort()[0];if(!first||!p.created)return false;const d=new Date(p.created),loc=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;return loc>first}
@@ -368,7 +371,7 @@ function compute(){
     }
     for(const x in delta)R[x]+=delta[x];
   }
-  for(const id in R)R[id]+=Number(S.players[id].adj)||0;
+  for(const id in R){R[id]+=Number(S.players[id].adj)||0;st[id].fi=Math.min(1,cnt[id]/N_PROV);st[id].nm=Math.min(cnt[id],N_PROV)}
   return {R,st,mi};
 }
 const valid=(a,b)=>Number.isInteger(a)&&Number.isInteger(b)&&Math.max(a,b)===21&&Math.min(a,b)>=0&&Math.min(a,b)<21;
@@ -432,7 +435,7 @@ function deep(sk='all'){
   const tro={},pal={};let run={};
   for(const n of fins){
     const played=new Set();for(const s of list)if(s.night===n.id)[...s.a,...s.b].forEach(x=>played.add(x));
-    for(const x of Object.keys(S.players)){if(played.has(x)){run[x]=(run[x]||0)+1;if(run[x]===5)give(x,'fidele');const o=d(x),pre=st[x]?.pre?.[n.id];if(pre!=null)o.hist.push({n:n.id,r:pre+(st[x].byNight[n.id]||0)})}else run[x]=0}
+    for(const x of Object.keys(S.players)){if(played.has(x)){run[x]=(run[x]||0)+1;if(run[x]===5)give(x,'fidele');const o=d(x),pre=st[x]?.pre?.[n.id];if(pre!=null){let w=0,l=0;for(const s of list)if(s.night===n.id){const ia=s.a.includes(x),ib=s.b.includes(x);if(ia||ib){((ia&&s.sa>s.sb)||(ib&&s.sb>s.sa))?w++:l++}}o.hist.push({n:n.id,pre,r:pre+(st[x].byNight[n.id]||0),w,l})}}else run[x]=0}
     const firsts={};for(const r of [1,2])for(const [c,ids] of Object.entries(n['r'+r]||{})){const sd=standings(n.id,r,c,ids,R);if(sd.length&&sd[0].w>0)firsts[sd[0].id]=(firsts[sd[0].id]||0)+1}
     for(const [x,k] of Object.entries(firsts))if(k>=2&&S.players[x])give(x,'ascenseur');
     for(const x of played){const L=list.filter(s=>s.night===n.id&&(s.a.includes(x)||s.b.includes(x)));if(L.length>=6&&S.players[x]&&L.every(s=>(s.a.includes(x)?s.sa>s.sb:s.sb>s.sa)))give(x,'parfait')}
@@ -477,20 +480,101 @@ function vParcours(id){const P=parcours(id).filter(p=>inSaison(p.d,skNow()));if(
   <div class="sparkl"><span>Terrain 1 en haut</span><span>${esc(lab(P[0].d))} à ${esc(lab(P[P.length-1].d))}</span></div>
   <details class="pdet"><summary>Voir chaque soirée</summary><ul class="list">${[...P].reverse().map(p=>`<li><span>${esc(lab(p.d))}</span><span>Terrain ${p.c}, ${p.pos}<sup>${p.pos===1?'er':'e'}</sup>${p.src==='fwango'?' <small class="note">(Fwango)</small>':''}</span></li>`).join('')}</ul></details>
   <p class="note">Avant l'application, seuls le terrain et la position finale de chaque soirée sont connus (données de Fwango). Ils ne comptent pas dans la cote, les trophées ni les badges.</p>`}
+// ---------- Bilan de fin de saison ----------
+// Visible dans Ma fiche dès le lendemain de la dernière soirée d'une saison (et pour toute saison passée choisie).
+function bilan(id,sk){
+  if(sk==='all')return null; const b=BLOCS.find(x=>x.first===sk); if(!b||todayIso()<=b.last)return null;
+  const {D,pal}=deep(sk), o=D[id]; if(!o||!o.hist||!o.hist.length)return null;
+  const hs=o.hist, a=advStats(id,sk), w=hs.reduce((t,q)=>t+q.w,0), l=hs.reduce((t,q)=>t+q.l,0);
+  const best=[...hs].sort((x,y)=>(y.r-y.pre)-(x.r-x.pre))[0], fav=Object.entries(a.wi).filter(([y])=>S.players[y]).sort((x,y)=>y[1].n-x[1].n||y[1].w-x[1].w)[0];
+  const c=pal[id]||{};
+  return {label:saisonLabel(sk),nights:hs.length,matches:w+l,w,l,start:hs[0].pre,end:hs[hs.length-1].r,best,fav,trophs:TROPH.filter(t=>c[t.k]).map(t=>({name:t.name,col:t.col,n:c[t.k]})),serie:a.best};
+}
+function bilanPanel(id){
+  const B=bilan(id,skNow()); if(!B)return '';
+  const dd=Math.round(B.end-B.start), bd=Math.round(B.best.r-B.best.pre), mine=id===ls.get('pbme');
+  const it=(k,v)=>`<li><span>${k}</span><span><b>${v}</b></span></li>`;
+  return `<div class="panel banner"><h2 style="margin-top:0">${mine?'Ta saison':'Sa saison'} ${esc(B.label)}</h2><ul class="list">
+  ${it('Soirées jouées',B.nights)}${it('Matchs',`${B.matches} (${B.w} V, ${B.l} D)`)}${it('Cote',`${Math.round(B.start)} → ${Math.round(B.end)} (${dd>0?'+':''}${dd})`)}
+  ${it('Meilleure soirée',`${esc(fmtCourt(B.best.n))} (${bd>0?'+':''}${bd})`)}${it('Plus longue série',`${B.serie} victoire${B.serie>1?'s':''}`)}
+  ${B.fav?it('Partenaire favori',`${esc(name(B.fav[0]))} (${B.fav[1].n} matchs)`):''}${it('Trophées',B.trophs.length?B.trophs.map(t=>`${t.n} ${esc(t.name.replace(/^Le /,''))}`).join(', '):'aucun cette saison')}</ul>
+  <div class="row" style="margin-top:12px"><button data-act="shareBilan" data-p="${esc(id)}">📸 Partager ${mine?'mon':'ce'} bilan</button></div></div>`;
+}
+async function bilanImage(id){
+  const B=bilan(id,skNow()); if(!B)return null;
+  try{await Promise.all(['700 80px "Barlow Condensed"','600 40px Barlow'].map(x=>document.fonts.load(x)))}catch(e){}
+  const W=1080,H=1350,c=document.createElement('canvas');c.width=W;c.height=H;const g=c.getContext('2d');
+  const bg=g.createLinearGradient(0,0,W,H);bg.addColorStop(0,'#0b1a33');bg.addColorStop(1,'#132d57');g.fillStyle=bg;g.fillRect(0,0,W,H);
+  g.strokeStyle='rgba(255,255,255,.07)';g.lineWidth=6;g.strokeRect(60,60,W-120,H-120);g.fillStyle='#d6ee3a';g.fillRect(90,96,120,10);
+  const fit=(txt,max,w)=>{let fs=max;do{g.font=`700 ${fs}px "Barlow Condensed", sans-serif`;fs-=2}while(g.measureText(txt).width>w&&fs>30)};
+  g.fillStyle='#9fb3c8';g.font='600 40px Barlow, sans-serif';g.fillText('SAISON '+B.label.toUpperCase(),90,170);
+  g.fillStyle='#ffffff';fit(name(id),110,W-180);g.fillText(name(id),90,280);
+  const dd=Math.round(B.end-B.start), bd=Math.round(B.best.r-B.best.pre);
+  const tiles=[['Soirées',String(B.nights)],['Matchs',`${B.w}-${B.l}`],['Cote',`${dd>0?'+':''}${dd}`],['Meilleure série',`${B.serie} V`]];
+  tiles.forEach(([k,v],i)=>{const x=90+(i%2)*460,y=340+Math.floor(i/2)*220;g.fillStyle='rgba(255,255,255,.06)';g.beginPath();g.roundRect?g.roundRect(x,y,440,196,24):g.rect(x,y,440,196);g.fill();
+    g.fillStyle='#9fb3c8';g.font='600 34px Barlow, sans-serif';g.fillText(k,x+32,y+58);g.fillStyle=k==='Cote'?(dd<0?'#ff7a59':'#d6ee3a'):'#ffffff';g.font='700 96px "Barlow Condensed", sans-serif';g.fillText(v,x+32,y+160)});
+  let y=820;const line=(k,v)=>{g.fillStyle='#9fb3c8';g.font='600 32px Barlow, sans-serif';g.fillText(k,90,y);g.fillStyle='#ffffff';g.font='700 46px "Barlow Condensed", sans-serif';g.fillText(v,90,y+50);y+=100};
+  line('Cote',`${Math.round(B.start)} → ${Math.round(B.end)}`);
+  line('Meilleure soirée',`${fmtCourt(B.best.n)} (${bd>0?'+':''}${bd})`);
+  if(B.fav)line('Partenaire favori',name(B.fav[0]));
+  if(B.trophs.length){g.fillStyle='#9fb3c8';g.font='600 32px Barlow, sans-serif';g.fillText('Trophées',90,y);let x=90;for(const t of B.trophs){g.fillStyle=t.col;g.font='700 46px "Barlow Condensed", sans-serif';const s=`${t.n} ${t.name.replace(/^Le /,'')}`;g.fillText(s,x,y+50);x+=g.measureText(s).width+40}}
+  g.fillStyle='#6f86a6';g.font='500 28px Barlow, sans-serif';g.fillText('Ligue de pickleball du jeudi',90,H-90);
+  return await new Promise(r=>c.toBlob(r,'image/png'));
+}
+async function shareBlob(blob,fname,title){
+  const file=new File([blob],fname,{type:'image/png'});
+  if(navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title});return}catch(e){if(e.name==='AbortError')return}}
+  const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=fname;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000);toast('Image enregistrée');
+}
+// Statistiques avancées d'un joueur pour la saison choisie
+function advStats(id,sk){
+  const L=Object.values(S.scores).filter(x=>S.nights[x.night]&&valid(x.sa,x.sb)&&inSaison(x.night,sk)&&(x.a.includes(id)||x.b.includes(id)))
+    .sort((a,b)=>a.night.localeCompare(b.night)||a.round-b.round||a.court-b.court||a.m-b.m);
+  let cur=0,curW=null,best=0,run=0; const court={}, vs={}, wi={};
+  for(const x of L){const ia=x.a.includes(id),me=ia?x.a:x.b,op=ia?x.b:x.a,won=ia?x.sa>x.sb:x.sb>x.sa;
+    run=won?run+1:0;best=Math.max(best,run);
+    if(curW===won)cur++;else{curW=won;cur=1}
+    const c=court[x.court]=court[x.court]||{w:0,n:0};c.n++;if(won)c.w++;
+    for(const y of op){const q=vs[y]=vs[y]||{w:0,n:0};q.n++;if(won)q.w++}
+    for(const y of me)if(y!==id){const q=wi[y]=wi[y]||{w:0,n:0};q.n++;if(won)q.w++}}
+  return {n:L.length,cur,curW,best,court,vs,wi};
+}
+function advPanel(id){
+  const a=advStats(id,skNow()); if(!a.n)return '';
+  const pc=q=>Math.round(q.w/q.n*100)+' %', row=([y,q])=>`<li><span>${esc(name(y))}</span><span>${q.w} V, ${q.n-q.w} D <small class="note">(${pc(q)})</small></span></li>`;
+  const srt=m=>Object.entries(m).filter(([y])=>S.players[y]).sort((x,y)=>y[1].n-x[1].n||y[1].w/y[1].n-x[1].w/x[1].n||name(x[0]).localeCompare(name(y[0]),'fr'));
+  const cs=Object.entries(a.court).sort((x,y)=>Number(x[0])-Number(y[0]));
+  return `<h3 class="fh">Statistiques</h3><div class="duo"><div class="panel"><h3 class="fh">Série en cours</h3><div class="twho">${a.cur} ${a.curW?'victoire':'défaite'}${a.cur>1?'s':''}</div></div><div class="panel"><h3 class="fh">Plus longue série</h3><div class="twho">${a.best} victoire${a.best>1?'s':''}</div><p class="note">de suite</p></div></div>
+  <div class="panel"><h3 class="fh">Par terrain</h3><ul class="list">${cs.map(([c,q])=>`<li><span>Terrain ${esc(c)}</span><span>${q.w} V, ${q.n-q.w} D <small class="note">(${pc(q)})</small></span></li>`).join('')}</ul></div>
+  <details class="panel"><summary style="cursor:pointer;font-weight:700;min-height:32px">Contre chaque adversaire</summary><ul class="list">${srt(a.vs).map(row).join('')}</ul></details>
+  <details class="panel"><summary style="cursor:pointer;font-weight:700;min-height:32px">Avec chaque partenaire</summary><ul class="list">${srt(a.wi).map(row).join('')}</ul></details>`;
+}
 function vFiche(){
-  const {R}=deep(), {D,pal}=deep(skNow()), id=ficheId||ls.get('pbme'), all=Object.entries(S.players).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
+  const {R,st:ST}=deep(), {D,pal}=deep(skNow()), id=ficheId||ls.get('pbme'), all=Object.entries(S.players).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
   let h=saisonPicker()+`<div class="row" style="margin-bottom:14px"><label for="ficheSel">Fiche de</label><select id="ficheSel"><option value="">Choisis un joueur</option>${all.map(([x,p])=>`<option value="${esc(x)}"${x===id?' selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`;
   if(!id||!S.players[id])return h+`<p class="note">Choisis un joueur pour voir sa fiche.</p>`;
   const o=D[id]||{b:{},hist:[],mates:{},opps:{},best:Number(S.players[id].seed)||0,pts:0}, r=R[id]||1500, ti=tierOf(r), nx=TIERS[ti+1], t=TIERS[ti];
   const pct=nx?Math.max(0,Math.min(100,(r-t[0])/(nx[0]-t[0])*100)):100;
   h+=`<section class="fiche"><div class="fhead"><div><div class="twho">${esc(S.players[id].name)}</div>${tierTag(r)}</div><div class="fnum"><span class="big">${Math.round(r)}</span><small>cote · record ${Math.round(Math.max(o.best,r))}</small></div></div>`;
+  {const f=ST[id];if(f&&f.fi<1)h+=`<div class="panel" style="margin:10px 0"><p style="margin:0 0 6px"><b>Fiabilité de la cote : ${Math.round(f.fi*100)} %</b> (${f.nm} match${f.nm>1?'s':''} sur ${N_PROV})</p><div class="tierbar" style="--tc:#8fa3bd"><div style="width:${Math.round(f.fi*100)}%"></div></div><p class="note" style="margin:6px 0 0">${id===ls.get('pbme')?'Comme nouveau joueur, ta cote bouge plus vite pour trouver ton niveau.':'Comme nouveau joueur, sa cote bouge plus vite pour trouver son niveau.'} Elle se stabilise après ${N_PROV} matchs.</p></div>`}
   h+=`<div class="tierbar" style="--tc:${t[2]}"><div style="width:${pct.toFixed(0)}%"></div></div><p class="note">${nx?`${Math.ceil(nx[0]-r)} points avant ${nx[1]}`:'Palier maximal atteint!'}</p>`;
+  h+=bilanPanel(id);
   h+=vParcours(id);
-  const hs=o.hist; if(hs.length>=2){const lo=Math.min(...hs.map(q=>q.r))-10,hi=Math.max(...hs.map(q=>q.r))+10,W=300,H=90,xs=i=>i/(hs.length-1)*W,ys=v=>H-(v-lo)/(hi-lo)*H;
-    h+=`<h3 class="fh">Progression de la cote</h3><svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Courbe de la cote"><polyline fill="none" stroke="currentColor" stroke-width="3" vector-effect="non-scaling-stroke" points="${hs.map((q,i)=>`${xs(i).toFixed(1)},${ys(q.r).toFixed(1)}`).join(' ')}"/></svg><div class="sparkl"><span>${esc(fmtDate(hs[0].n))}</span><span>${esc(fmtDate(hs[hs.length-1].n))}</span></div>`}
+  const hs=o.hist; if(hs.length>=1){
+    const pts=[{lab:'Départ',r:hs[0].pre,txt:`Cote de départ de la saison : ${Math.round(hs[0].pre)}`},...hs.map(q=>{const dd=Math.round(q.r-q.pre);return {lab:q.n,r:q.r,txt:`${fmtDate(q.n)} : ${q.w} V, ${q.l} D, ${dd>0?'+':''}${dd} · cote ${Math.round(q.r)}`,dd}})];
+    const lo=Math.min(...pts.map(q=>q.r)),hi=Math.max(...pts.map(q=>q.r)),pad=Math.max(8,(hi-lo)*.12),a=lo-pad,z=hi+pad,W=320,H=150,L=44,Rm=10,T=10,B=22;
+    const xs=i=>L+(pts.length>1?i/(pts.length-1):.5)*(W-L-Rm), ys=v=>T+(z-v)/(z-a)*(H-T-B), last=pts.length-1;
+    const mo=d=>{const [y,m,j]=d.split('-').map(Number);return new Date(y,m-1,j).toLocaleDateString('fr-CA',{day:'numeric',month:'short'})};
+    h+=`<h3 class="fh">Progression de la cote</h3><svg class="spark cote" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de la cote, soirée par soirée">
+    ${[hi,lo].map(v=>`<line x1="${L}" x2="${W-Rm}" y1="${ys(v).toFixed(1)}" y2="${ys(v).toFixed(1)}" stroke="currentColor" stroke-opacity=".18" stroke-dasharray="3 4"/><text x="${L-14}" y="${(ys(v)+4).toFixed(1)}" text-anchor="end" class="ax">${Math.round(v)}</text>`).join('')}
+    <polyline fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" points="${pts.map((q,i)=>`${xs(i).toFixed(1)},${ys(q.r).toFixed(1)}`).join(' ')}"/>
+    ${pts.map((q,i)=>`<g data-act="cpt" data-t="${esc(q.txt)}" style="cursor:pointer"><circle cx="${xs(i).toFixed(1)}" cy="${ys(q.r).toFixed(1)}" r="14" fill="transparent"/><circle cx="${xs(i).toFixed(1)}" cy="${ys(q.r).toFixed(1)}" r="${i===last?6:4.5}" fill="${i===0?'var(--bg)':q.dd<0?'var(--down)':'currentColor'}" stroke="currentColor" stroke-width="2"/></g>`).join('')}
+    ${pts.length>2?`<text x="${xs(1).toFixed(1)}" y="${H-5}" text-anchor="middle" class="ax">${esc(mo(pts[1].lab))}</text>`:''}<text x="${W-Rm}" y="${H-5}" text-anchor="end" class="ax">${esc(mo(pts[last].lab==='Départ'?todayIso():pts[last].lab))}</text></svg>
+    <p class="note" id="cptInfo" style="margin:4px 0 0;min-height:1.4em">${esc(pts[last].txt)}</p><p class="note" style="margin:0">Touche un point pour voir le résultat de la soirée.</p>`}
   const pick=(m,f)=>Object.entries(m).filter(([y,q])=>S.players[y]&&q.n>=2).sort((a,b)=>f(b[1])-f(a[1])||b[1].n-a[1].n)[0];
   const bm=pick(o.mates,q=>q.w/q.n), bn=pick(o.opps,q=>q.w/q.n);
   h+=`<div class="duo">${bm?`<div class="panel"><h3 class="fh">Meilleur partenaire</h3><div class="twho">${esc(name(bm[0]))}</div><p class="note">${bm[1].w} victoire(s) en ${bm[1].n} match(s) ensemble</p></div>`:''}${bn&&bn[1].w?`<div class="panel"><h3 class="fh">Bête noire</h3><div class="twho">${esc(name(bn[0]))}</div><p class="note">${bn[1].w} victoire(s) sur ${bn[1].n} affrontement(s)</p></div>`:''}</div>`;
+  h+=advPanel(id);
   const c=pal[id]; if(c)h+=`<h3 class="fh">Trophées</h3><p>${TROPH.filter(x=>c[x.k]).map(x=>`<span class="tb" style="--tc:${x.col}">${c[x.k]}&nbsp;${x.name}</span>`).join(' ')}</p>`;
   h+=`<h3 class="fh">Badges (${BADGES.filter(b=>o.b[b.k]).length}/${BADGES.length})</h3><div class="badges">${BADGES.map(b=>`<div class="badge${o.b[b.k]?' on':''}"><span class="bg">${b.g}</span><b>${b.n}${o.b[b.k]>1?` ×${o.b[b.k]}`:''}</b><small>${b.d}</small></div>`).join('')}</div>`;
   if(o.pts)h+=`<p class="note" style="margin-top:12px">Pronostics réussis : ${o.pts} point(s)</p>`;
@@ -502,7 +586,42 @@ function vTrophies(nid){const t=deep().tro[nid];if(t&&ls.get('trofx')!==nid){ls.
   return `<section class="troph"><h2>Les trophées de la soirée</h2><div class="tgrid">${t.map(x=>`<div class="tcard" style="--tc:${x.col}">${cup(x.col)}<div><div class="tname">${x.name}</div><div class="twho">${esc(name(x.who))}</div><div class="twhat">${x.what}</div><p class="note">${esc(x.why)}</p></div></div>`).join('')}</div>
   ${pr?`<p class="pill live">Tes pronostics : ${['ja','lb','mr'].filter(k=>pr[k]===w[k]).length} sur 3</p>`:''}
   ${f.length?`<h2 style="margin-top:18px">Faits saillants</h2><ul class="list faits">${f.map(([a,b])=>`<li><span><b>${a}</b><br>${esc(b)}</span></li>`).join('')}</ul>`:''}
+  <div class="row" style="margin-top:12px"><button data-act="shareImg" data-n="${esc(nid)}">📸 Partager l'image de la soirée</button></div>
   ${S.admin?`<div class="row" style="margin-top:12px"><button class="go" data-act="copyRecap" data-n="${esc(nid)}">Copier le résumé pour Messenger</button><button data-act="annTroph" data-n="${esc(nid)}">Annoncer par notification</button></div>`:''}</section>`}
+// ---------- Image de la soirée à partager ----------
+async function soireeImage(nid){
+  const t=deep().tro[nid]; if(!t)return null; const f=faits(nid);
+  try{await Promise.all(['700 80px "Barlow Condensed"','600 40px Barlow','400 36px Barlow'].map(x=>document.fonts.load(x)))}catch(e){}
+  const W=1080,H=1350,c=document.createElement('canvas');c.width=W;c.height=H;const g=c.getContext('2d');
+  const bg=g.createLinearGradient(0,0,W,H);bg.addColorStop(0,'#0b1a33');bg.addColorStop(1,'#132d57');g.fillStyle=bg;g.fillRect(0,0,W,H);
+  // lignes de terrain
+  g.strokeStyle='rgba(255,255,255,.07)';g.lineWidth=6;g.strokeRect(60,60,W-120,H-120);
+  g.fillStyle='#d6ee3a';g.fillRect(90,96,120,10);
+  const wrap=(txt,x,y,maxW,lh,maxL=3)=>{const w=String(txt).split(' ');let line='',n=0;for(let i=0;i<w.length;i++){const test=line?line+' '+w[i]:w[i];if(g.measureText(test).width>maxW&&line){if(++n>=maxL){g.fillText(line+'…',x,y);return y+lh}g.fillText(line,x,y);y+=lh;line=w[i]}else line=test}g.fillText(line,x,y);return y+lh};
+  g.textBaseline='alphabetic';g.fillStyle='#ffffff';{let fs=84;do{g.font=`700 ${fs}px "Barlow Condensed", sans-serif`;fs-=2}while(g.measureText('LES TROPHÉES DE LA SOIRÉE').width>W-180&&fs>40)}g.fillText('LES TROPHÉES DE LA SOIRÉE',90,190);
+  g.fillStyle='#9fb3c8';g.font='600 40px Barlow, sans-serif';const dt=fmtDate(nid);g.fillText('Ligue de pickleball du jeudi · '+dt.charAt(0).toUpperCase()+dt.slice(1),90,248);
+  const cupAt=(x,y,s,col)=>{g.save();g.translate(x,y);g.scale(s/64,s/64);g.fillStyle=col;g.beginPath();g.moveTo(18,8);g.lineTo(46,8);g.lineTo(46,22);g.arc(32,22,14,0,Math.PI);g.closePath();g.fill();
+    g.strokeStyle=col;g.lineWidth=4;g.beginPath();g.moveTo(18,12);g.lineTo(8,12);g.lineTo(8,16);g.quadraticCurveTo(8,26,18,26);g.moveTo(46,12);g.lineTo(56,12);g.lineTo(56,16);g.quadraticCurveTo(56,26,46,26);g.stroke();
+    g.fillRect(29,36,6,12);g.fillRect(20,48,24,6);g.restore()};
+  let y=300;
+  for(const x of t){const h=176;g.fillStyle='rgba(255,255,255,.06)';g.beginPath();g.roundRect?g.roundRect(90,y,W-180,h,24):g.rect(90,y,W-180,h);g.fill();
+    g.fillStyle=x.col;g.fillRect(90,y,12,h);cupAt(132,y+32,112,x.col);
+    g.fillStyle=x.col;g.font='700 46px "Barlow Condensed", sans-serif';g.fillText(x.name.toUpperCase(),280,y+58);
+    g.fillStyle='#ffffff';g.font='700 72px "Barlow Condensed", sans-serif';g.fillText(name(x.who),280,y+124);
+    g.fillStyle='#9fb3c8';g.font='400 32px Barlow, sans-serif';g.fillText(x.what,280,y+160);y+=h+20}
+  if(f.length){y+=44;g.fillStyle='#d6ee3a';g.font='700 52px "Barlow Condensed", sans-serif';g.fillText('FAITS SAILLANTS',90,y);y+=24;
+    for(const [a,b] of f.slice(0,3)){if(y>H-200)break;y+=40;g.fillStyle='#ffffff';g.font='600 34px Barlow, sans-serif';g.fillText(a,90,y);y+=40;g.fillStyle='#c9d8ee';g.font='400 30px Barlow, sans-serif';y=wrap(b.replace(/ %/g,'\u00a0%').replace(/ : /g,'\u00a0: '),90,y,W-180,38,2)-8}}
+  g.fillStyle='#6f86a6';g.font='500 28px Barlow, sans-serif';g.fillText('mecaniquepgagnon-cyber.github.io/pickleball',90,H-90);
+  return await new Promise(r=>c.toBlob(r,'image/png'));
+}
+async function shareImage(nid){
+  if(busy)return;busy=true;
+  try{const blob=await soireeImage(nid);if(!blob){toast('Pas de trophées pour cette soirée');return}
+    const file=new File([blob],`pickleball-${nid}.png`,{type:'image/png'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title:'Les trophées de la soirée'});return}catch(e){if(e.name==='AbortError')return}}
+    const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=file.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000);toast('Image enregistrée')}
+  catch(e){toast('Image impossible : '+e.message)}finally{busy=false}
+}
 function trophyText(nid){const t=deep().tro[nid];return t?t.map(x=>`${x.name.replace(/^Le /,'')} : ${name(x.who)}`).join(' · '):''}
 
 // ---------- Soirées ----------
@@ -765,6 +884,26 @@ function vSoiree(){
   if(n.status==='r2')h+=`<p style="margin-top:20px"><button class="go" data-act="fin"${roundDone(n,2)?'':' disabled'}>Terminer la soirée</button></p>`;
   return h;
 }
+// ---------- Ajouter au calendrier ----------
+const LIEU={nom:'Centre sportif du collège Laval',adresse:'1275, avenue du Collège, Laval (Québec) H7C 1W8',debut:'1915',fin:'2045'};
+function calLinks(nid){
+  const d=nid.replace(/-/g,''), titre='Pickleball : ligue du jeudi', lieu=`${LIEU.nom}, ${LIEU.adresse}`, url='https://mecaniquepgagnon-cyber.github.io/pickleball/';
+  const g=`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(titre)}&dates=${d}T${LIEU.debut}00/${d}T${LIEU.fin}00&ctz=America/Toronto&location=${encodeURIComponent(lieu)}&details=${encodeURIComponent('Terrains et pointages : '+url)}`;
+  const e=t=>t.replace(/([,;\\])/g,'\\$1');
+  const ics=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Ligue pickleball//FR','CALSCALE:GREGORIAN',
+    'BEGIN:VTIMEZONE','TZID:America/Toronto','BEGIN:STANDARD','DTSTART:19701101T020000','RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU','TZOFFSETFROM:-0400','TZOFFSETTO:-0500','TZNAME:EST','END:STANDARD','BEGIN:DAYLIGHT','DTSTART:19700308T020000','RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU','TZOFFSETFROM:-0500','TZOFFSETTO:-0400','TZNAME:EDT','END:DAYLIGHT','END:VTIMEZONE',
+    'BEGIN:VEVENT',`UID:pickleball-${d}@ligue`,`DTSTAMP:${new Date().toISOString().replace(/[-:]/g,'').slice(0,15)}Z`,`DTSTART;TZID=America/Toronto:${d}T${LIEU.debut}00`,`DTEND;TZID=America/Toronto:${d}T${LIEU.fin}00`,
+    `SUMMARY:${e(titre)}`,`LOCATION:${e(lieu)}`,`DESCRIPTION:${e('Terrains et pointages : '+url)}`,`URL:${url}`,
+    'BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:Pickleball ce soir','TRIGGER:-PT60M','END:VALARM','END:VEVENT','END:VCALENDAR'].join('\r\n');
+  return {g,ics};
+}
+function calButton(nid){
+  return `<div class="row" style="margin-top:10px">${isAndroid?`<button data-act="gcal" data-n="${esc(nid)}">📅 Ajouter à mon calendrier</button><button data-act="ics" data-n="${esc(nid)}" style="font-size:14px">Autre calendrier</button>`:`<button data-act="ics" data-n="${esc(nid)}">📅 Ajouter à mon calendrier</button>`}</div><p class="note" style="margin:4px 0 0">${esc(LIEU.nom)}, de 19 h 15 à 20 h 45</p>`;
+}
+function downloadIcs(nid){
+  const blob=new Blob([calLinks(nid).ics],{type:'text/calendar;charset=utf-8'}), u=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=u;a.download=`pickleball-${nid}.ics`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000);
+}
 function vPresences(){
   const n=[...nightsSorted()].reverse().find(x=>x.status==='inscription');
   if(!n)return `<p class="hero">Pas d'inscription ouverte</p><p class="note">Les présences ouvrent quand l'organisateur crée la prochaine soirée.</p>`+whoBar()+remindPanel();
@@ -775,6 +914,7 @@ function vPresences(){
   const so=mine&&S.players[mine]?.sub_only;
   if(so)h+=`<p style="margin:0 0 10px"><b>Tu es inscrit comme remplaçant.</b> Indique si tu es disponible : un administrateur confirmera ta place s'il manque des joueurs.</p>`;
   if(mine&&S.players[mine])h+=`<div class="row">${PRES.filter(([k])=>!(so&&k==='present')).map(([k,l])=>`<button data-act="pres" data-s="${k}" data-p="${esc(mine)}" class="${st===k?'go':''}">${st===k?'✓ ':''}${l}</button>`).join('')}</div>${st?`<p style="margin:10px 0 0"><button data-act="pres" data-s="" data-p="${esc(mine)}">Effacer ma réponse</button></p>`:''}`;
+  if(st==='present')h+=calButton(n.id);
   if(st==='remplacant')h+=`<p style="margin:10px 0 0"><b>Tu es en réserve.</b> Si un administrateur confirme ta place, tu recevras une notification et ton nom passera dans les confirmés.</p>`;
   h+=`<p class="note">Les présents ont les places dans l'ordre de confirmation. Un remplaçant joue seulement si un administrateur confirme sa place.</p></div>`+remindPanel();
   if(mine&&S.players[mine]){const pr=S.pronos[n.id+'__'+mine]||{},opts=sel=>`<option value="">À choisir</option>`+act.map(([id,p])=>`<option value="${esc(id)}"${id===sel?' selected':''}>${esc(p.name)}</option>`).join('');
@@ -791,7 +931,7 @@ function vClassement(){
   const {R,st}=deep(), {pal,D}=deep(skNow()), E={wins:0,l:0,pf:0,pa:0,nset:new Set()}, rows=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>R[b[0]]-R[a[0]]);
   const tro=id=>{const c=pal[id];return c?TROPH.filter(t=>c[t.k]).map(t=>`<span class="tb" style="--tc:${t.col}" title="${t.name}">${c[t.k]}&nbsp;${t.name.replace(/^Le /,'').split(/[ -]/).pop()}</span>`).join(' '):''};
   if(!rows.length)return `<p class="hero">Aucun joueur</p><p class="note">La liste des joueurs sera chargée par l'organisateur.</p>`;
-  return saisonPicker()+`<p class="note">Cote Elo : une victoire contre plus fort rapporte plus, et un gros écart ajoute un bonus. La cote change une fois par soirée, d'après les cotes du début de soirée, donc l'ordre des matchs n'a aucun effet. Un nouveau joueur, ajouté en cours de saison, bouge plus vite pendant ses 12 premiers matchs pour trouver son niveau. Une absence ne change pas la cote.</p><table class="stack"><thead><tr><th>#</th><th>Joueur</th><th class="r">Cote</th><th class="r">Dernière soirée</th><th class="r">V-D</th><th class="r">Diff.</th><th class="r">Soirées</th><th>Trophées</th></tr></thead><tbody>${rows.map(([id,p],i)=>{const t=st[id],z=D[id]||E,d=Math.round(t.last),df=z.pf-z.pa;return `<tr${id===ls.get('pbme')?' class="meRow"':''}><td>${i+1}</td><td><button class="lnk" data-act="fiche" data-p="${esc(id)}">${esc(p.name)}</button> ${tierTag(R[id])}${p.sub_only?' <span class="tier" style="--tc:#c9ced6">Remplaçant</span>':''}</td><td class="r big">${Math.round(R[id])}</td><td class="r ${d>0?'plus':d<0?'minus':''}">${t.lastNight?(d>0?'+':'')+d:''}</td><td class="r">${z.wins}-${z.l}</td><td class="r">${df>0?'+':''}${df}</td><td class="r">${z.nset.size}</td><td>${tro(id)}</td></tr>`}).join('')}</tbody></table>${(()=>{const pr=Object.entries(D).filter(([x,o])=>o.pts&&S.players[x]).sort((a,b)=>b[1].pts-a[1].pts).slice(0,5);return pr.length?`<h2 style="margin-top:24px">Meilleurs pronostiqueurs</h2><ol class="list">${pr.map(([x,o])=>`<li><span>${esc(name(x))}</span><span class="pill">${o.pts} pt${o.pts>1?'s':''}</span></li>`).join('')}</ol>`:''})()}`;
+  return saisonPicker()+`<p class="note">Cote Elo : une victoire contre plus fort rapporte plus, et un gros écart ajoute un bonus. La cote change une fois par soirée, d'après les cotes du début de soirée, donc l'ordre des matchs n'a aucun effet. Un nouveau joueur, ajouté en cours de saison, bouge plus vite pendant ses 12 premiers matchs pour trouver son niveau. Une absence ne change pas la cote.</p><table class="stack"><thead><tr><th>#</th><th>Joueur</th><th class="r">Cote</th><th class="r">Dernière soirée</th><th class="r">V-D</th><th class="r">Diff.</th><th class="r">Soirées</th><th>Trophées</th></tr></thead><tbody>${rows.map(([id,p],i)=>{const t=st[id],z=D[id]||E,d=Math.round(t.last),df=z.pf-z.pa;return `<tr${id===ls.get('pbme')?' class="meRow"':''}><td>${i+1}</td><td><button class="lnk" data-act="fiche" data-p="${esc(id)}">${esc(p.name)}</button> ${tierTag(R[id])}${fiTag(st[id])}${p.sub_only?' <span class="tier" style="--tc:#c9ced6">Remplaçant</span>':''}</td><td class="r big">${Math.round(R[id])}</td><td class="r ${d>0?'plus':d<0?'minus':''}">${t.lastNight?(d>0?'+':'')+d:''}</td><td class="r">${z.wins}-${z.l}</td><td class="r">${df>0?'+':''}${df}</td><td class="r">${z.nset.size}</td><td>${tro(id)}</td></tr>`}).join('')}</tbody></table>${(()=>{const pr=Object.entries(D).filter(([x,o])=>o.pts&&S.players[x]).sort((a,b)=>b[1].pts-a[1].pts).slice(0,5);return pr.length?`<h2 style="margin-top:24px">Meilleurs pronostiqueurs</h2><ol class="list">${pr.map(([x,o])=>`<li><span>${esc(name(x))}</span><span class="pill">${o.pts} pt${o.pts>1?'s':''}</span></li>`).join('')}</ol>`:''})()}`;
 }
 const RULES_DEFAUT=`## Les soirées
 La ligue joue le jeudi soir, en double, sur un maximum de 8 terrains. Les soirées sont créées automatiquement pendant la saison.
@@ -862,12 +1002,44 @@ function calPanel(){
   ${nxt?`<p class="note" style="margin:0 0 4px">Ensuite : ${esc(saisonLabel(nxt.first))}, du ${esc(per(nxt))}</p>`:''}
   <p class="note" style="margin:0 0 12px">Jeudis fermés : ${f.length?f.map(d=>esc(fmtCourt(d))).join(', '):'aucun'}</p><button data-act="calEdit">Modifier le calendrier</button></div>`;
 }
+// ---------- Exportation Excel (administrateurs) ----------
+const XLSX_URL='https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+function loadXlsx(){return window.XLSX?Promise.resolve(window.XLSX):new Promise((ok,ko)=>{const sc=document.createElement('script');sc.src=XLSX_URL;sc.onload=()=>ok(window.XLSX);sc.onerror=()=>ko(new Error('bibliothèque Excel inaccessible, vérifie ta connexion'));document.head.appendChild(sc)})}
+function exportRows(){
+  const {R,st}=compute(), {tro}=deep(), ns=Object.values(S.nights).sort((a,b)=>a.id.localeCompare(b.id));
+  const dt=v=>{const d=new Date(v);if(isNaN(d))return '';const p=n=>String(n).padStart(2,'0');return `${isoLocal(d)} ${p(d.getHours())}:${p(d.getMinutes())}`};
+  const ids=Object.keys(S.players).sort((a,b)=>R[b]-R[a]), rank={};ids.filter(x=>S.players[x].active!==false).forEach((x,i)=>rank[x]=i+1);
+  const ST={inscription:'Inscription',r1:'Ronde 1',r2:'Ronde 2',fini:'Terminée'};
+  const joueurs=ids.map(x=>{const p=S.players[x],t=st[x];return {'Rang':rank[x]||'','Nom':p.name,'Cote actuelle':Math.round(R[x]),'Cote de départ':Number(p.seed),'Ajustement':Number(p.adj)||0,'Fiabilité (%)':Math.round((t.fi??1)*100),'Actif':p.active!==false?'Oui':'Non','Remplaçant seulement':p.sub_only?'Oui':'Non','Soirées jouées':t.nights.size,'Matchs':t.w+t.l,'Victoires':t.w,'Défaites':t.l,'Points pour':t.pf,'Points contre':t.pa,'Différentiel':t.pf-t.pa,'Ajouté le':p.created?String(p.created).slice(0,10):''}});
+  const soirees=ns.map(n=>{const a=Object.values(S.rsvp).filter(r=>r.night===n.id),c=k=>a.filter(r=>(r.status||'present')===k).length;return {'Date':n.id,'Étape':ST[n.status]||n.status,'Terrains':n.courts||0,'Présents':c('present'),'Remplaçants disponibles':c('remplacant'),'Absents':c('absent')}});
+  const pointages=Object.values(S.scores).filter(x=>S.nights[x.night]).sort((a,b)=>a.night.localeCompare(b.night)||a.round-b.round||a.court-b.court||a.m-b.m).map(x=>{const ok=valid(x.sa,x.sb);return {'Date':x.night,'Ronde':x.round,'Terrain':x.court,'Match':x.m,'Équipe A, joueur 1':name(x.a[0]),'Équipe A, joueur 2':name(x.a[1]),'Équipe B, joueur 1':name(x.b[0]),'Équipe B, joueur 2':name(x.b[1]),'Pointage A':x.sa,'Pointage B':x.sb,'Gagnants':ok?(x.sa>x.sb?x.a:x.b).map(name).join(' et '):'Pointage incomplet','Écart':ok?Math.abs(x.sa-x.sb):''}});
+  const presences=Object.values(S.rsvp).filter(r=>S.nights[r.night]).sort((a,b)=>a.night.localeCompare(b.night)||a.ts-b.ts).map(r=>({'Date':r.night,'Joueur':name(r.player),'Réponse':presLabel(r.status||'present'),'Remplaçant confirmé':r.sub_confirmed?'Oui':'','Répondu le':r.ts?dt(Number(r.ts)):''}));
+  const fins=ns.filter(n=>Object.values(st).some(t=>n.id in t.pre));
+  const cotes=ids.map(x=>{const o={'Nom':S.players[x].name,'Départ':Number(S.players[x].seed)};let last=Number(S.players[x].seed);for(const n of fins){const t=st[x];if(n.id in t.pre)last=t.pre[n.id]+(t.byNight[n.id]||0);o[n.id]=Math.round(last)}o['Actuelle']=Math.round(R[x]);return o});
+  const trophees=[];for(const n of ns)if(n.status==='fini'&&tro[n.id])for(const t of tro[n.id])trophees.push({'Date':n.id,'Trophée':t.name,'Gagnant':name(t.who),'Raison':t.why});
+  const pronos=Object.values(S.pronos).filter(x=>S.nights[x.night]).sort((a,b)=>a.night.localeCompare(b.night)).map(x=>{const t=tro[x.night],w=t?Object.fromEntries(t.map(y=>[y.k,y.who])):null;return {'Date':x.night,'Joueur':name(x.player),'Jack Adams':x.ja?name(x.ja):'','Lady Byng':x.lb?name(x.lb):'','Maurice-Richard':x.mr?name(x.mr):'','Bonnes réponses':w?['ja','lb','mr'].filter(k=>x[k]&&x[k]===w[k]).length:''}});
+  const comms=(S.comments||[]).map(c=>({'Date':dt(c.created),'Joueur':c.player?name(c.player):'','Message':c.body,'Lu':c.lu?'Oui':'Non'}));
+  const cal=[...BLOCS.map(b=>({'Type':'Saison','Nom':saisonLabel(b.first),'Du':b.first,'Au':b.last})),...FERMES.map(d=>({'Type':'Jeudi fermé','Nom':'','Du':d,'Au':d}))];
+  return [['Joueurs',joueurs],['Soirées',soirees],['Pointages',pointages],['Présences',presences],['Cote par soirée',cotes],['Trophées',trophees],['Pronostics',pronos],['Commentaires',comms],['Calendrier',cal]];
+}
+async function exportExcel(){
+  if(busy)return;busy=true;toast('Préparation du fichier…');
+  try{const X=await loadXlsx(),wb=X.utils.book_new();
+    for(const [nm,rows] of exportRows()){const ws=rows.length?X.utils.json_to_sheet(rows):X.utils.aoa_to_sheet([['Aucune donnée']]);
+      if(rows.length){const keys=Object.keys(rows[0]);ws['!cols']=keys.map(k=>({wch:Math.min(45,Math.max(k.length,...rows.map(r=>String(r[k]??'').length))+2)}));ws['!autofilter']={ref:ws['!ref']}}
+      X.utils.book_append_sheet(wb,ws,nm)}
+    const out=X.write(wb,{bookType:'xlsx',type:'array'}),blob=new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),fname=`ligue-pickleball-${todayIso()}.xlsx`;
+    const file=new File([blob],fname,{type:blob.type});
+    if(isMobile&&navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file],title:'Données de la ligue'});return}catch(e){if(e.name==='AbortError')return}}
+    const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=fname;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),60000);toast('Fichier Excel téléchargé')}
+  catch(e){toast('Exportation impossible : '+e.message)}finally{busy=false}
+}
 function calRead(){if(!calEdit)return;for(const e of document.querySelectorAll('[data-cal]'))calEdit.blocs[Number(e.dataset.i)][e.dataset.cal]=e.value}
 function vAdmin(){
   if(!S.admin)return `<p>Section réservée à l'organisateur.</p>`;
   const {R}=compute(), ps=Object.entries(S.players).sort((a,b)=>R[b[0]]-R[a[0]]), ns=nightsSorted();
   const low=ps.filter(([,p])=>p.active!==false).reduce((m,[id])=>Math.min(m,R[id]),Infinity);
-  return comPanel()+nightsPanel()+calPanel()+`
+  return comPanel()+nightsPanel()+calPanel()+`<div class="panel"><h2>Exporter les données</h2><p class="note">Un fichier Excel avec tous les joueurs, soirées, pointages, présences, cotes soirée par soirée, trophées, pronostics, commentaires et le calendrier. Un onglet par sujet.</p><button class="go" data-act="exportXlsx">Télécharger le fichier Excel</button></div>`+`
   <div class="panel"><h2>Rappels</h2><p>${S.push.length} joueur(s) ont activé les rappels sur leur téléphone${S.push.length?': '+S.push.map(id=>esc(name(id))).join(', '):''}.</p><p class="note">Envoi automatique le mardi vers 18 h et le jeudi vers midi, seulement à ceux qui n'ont pas confirmé.</p>
   <div class="row"><button class="go" data-act="remindMsg">Préparer le message Messenger</button><button data-act="remindNow">Envoyer le rappel maintenant</button><button data-act="remindTest">M'envoyer un test</button></div>
   ${remindMsg?`<textarea id="remindTxt" style="margin-top:10px">${esc(remindMsg)}</textarea><button data-act="remindCopy">Copier</button>`:''}</div>
@@ -918,6 +1090,12 @@ document.addEventListener('click',async e=>{
     if(x[0]===p[0]&&x[1]===p[1]){render();return} await doSwap(n,curRound,x,p); return}
   const b=e.target.closest('[data-act]');if(!b||b.tagName==='SELECT')return;const a=b.dataset.act,n=S.nights[curNight];
   if(a==='pushOn')await enablePush();
+  if(a==='ics'){downloadIcs(b.dataset.n);return}
+  if(a==='shareImg'){await shareImage(b.dataset.n);return}
+  if(a==='exportXlsx'){await exportExcel();return}
+  if(a==='shareBilan'){if(busy)return;busy=true;try{const bl=await bilanImage(b.dataset.p);if(bl)await shareBlob(bl,`bilan-${skNow()}.png`,'Ma saison de pickleball')}catch(x){toast('Image impossible : '+x.message)}finally{busy=false}return}
+  if(a==='cpt'){const e=$('cptInfo');if(e)e.textContent=b.dataset.t;for(const c of document.querySelectorAll('[data-act=cpt] circle:last-child'))c.setAttribute('stroke-width','2');b.querySelector('circle:last-child').setAttribute('stroke-width','5');return}
+  if(a==='gcal'){window.open(calLinks(b.dataset.n).g,'_blank','noopener');return}
   if(a==='bannerLater'){ls.set('pbbanner',String(Date.now()+3*864e5));render();toast('Je te le rappellerai dans 3 jours')}
   if(a==='install'&&installEvt){installEvt.prompt();try{await installEvt.userChoice}catch(x){}installEvt=null;render()}
   if(a==='pushOff')await disablePush();
