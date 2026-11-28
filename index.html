@@ -270,6 +270,8 @@ body[data-deco=epure] .spark{color:var(--acc)}
 .pstats .big{display:block;font-size:30px;line-height:1}.pstats small{font-size:12px;color:var(--mute);line-height:1.2;display:block}
 .spark.parc{height:120px}
 .pdet summary{cursor:pointer;font-weight:600;margin:8px 0;min-height:32px}
+#fete{display:inline-block;margin:0 0 12px;padding:4px 12px;border-radius:99px;background:var(--ball);color:#1b2a05;font-weight:700;font-size:14px}
+#fx{position:fixed;inset:0;pointer-events:none;z-index:60;width:100%;height:100%}
 @media(max-width:600px){table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-block:10px}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:8em;text-align:start}.stack td::before{content:attr(data-l);float:inline-start;width:7.5em;margin-inline-start:-8em;white-space:normal}.stack td:empty{display:none}.match{grid-template-columns:minmax(0,1fr)}}
 </style>
 <script>new MutationObserver(()=>{for(const c of document.querySelectorAll('.stack td:not([data-l])')){let i=0,p=c;while(p=p.previousElementSibling)i+=p.colSpan;c.dataset.l=c.closest('table').rows[0].cells[i]?.textContent||''}}).observe(document,{childList:true,subtree:true})</script>
@@ -279,6 +281,7 @@ body[data-deco=epure] .spark{color:var(--acc)}
   <button id="logout" hidden>Changer de code</button>
   <h1>Ligue de pickleball du jeudi</h1>
   <p id="sub">Chargement…</p>
+  <p id="fete" hidden></p>
   <nav id="nav">
     <a href="#soiree" data-v="soiree">Soirée</a>
     <a href="#presences" data-v="presences">Présences</a>
@@ -324,13 +327,13 @@ async function load(){
   if(!code)return;
   try{
     lastLoad=Date.now(); const st=await rpc('get_state',{p_code:code});
-    S.admin=!!st.admin; S.league=st.league_code||''; S.push=st.push_players||[];
+    S.admin=!!st.admin; S.league=st.league_code||''; S.push=st.push_players||[]; S.season=st.season||{};
     S.players=Object.fromEntries(st.players.map(p=>[p.id,p]));
     S.nights=Object.fromEntries(st.nights.map(n=>[n.id,n]));
     S.rsvp=Object.fromEntries(st.rsvp.map(r=>[r.night+'__'+r.player,r]));
     S.scores=Object.fromEntries(st.scores.map(s=>[s.id,s]));
     S.pronos=Object.fromEntries((st.pronos||[]).map(x=>[x.night+'__'+x.player,x])); S.ver++;
-    S.ready=1; render();
+    S.ready=1; render(); seasonalOnce(); tierCheck();
   }catch(e){
     if(/Code invalide/.test(e.message)){code=null;ls.set('pbcode',null);S.ready=0;render();toast('Code de ligue invalide')}
     else if(!S.ready){$('app').innerHTML='<p class="note">Impossible de joindre la ligue pour l\'instant. Vérifie ta connexion.</p>'}
@@ -413,14 +416,14 @@ const BADGES=[
  {k:'parfait',n:'Soirée parfaite',d:'Gagner tous ses matchs d\'une soirée',g:'6'},
  {k:'fidele',n:'Fidèle',d:'5 soirées de suite',g:'5'},
  {k:'etoile',n:'Étoile',d:'Remporter un trophée de soirée',g:'★'}];
-function deep(){
-  if(deep.v===S.ver&&deep.r)return deep.r;
-  const {R,st,mi}=compute(), fins=Object.values(S.nights).filter(n=>n.status==='fini').sort((a,b)=>a.id.localeCompare(b.id));
-  const list=Object.values(S.scores).filter(s=>S.nights[s.night]&&valid(s.sa,s.sb)).sort((a,b)=>a.night.localeCompare(b.night)||a.round-b.round||a.court-b.court||a.m-b.m);
-  const D={}; const d=x=>D[x]=D[x]||{b:{},streak:0,best:0,mates:{},opps:{},hist:[],pts:0,wins:0};
+function deep(sk='all'){
+  deep.c=deep.v===S.ver&&deep.c?deep.c:{};deep.v=S.ver; if(deep.c[sk])return deep.c[sk];
+  const {R,st,mi}=compute(), fins=Object.values(S.nights).filter(n=>n.status==='fini'&&inSaison(n.id,sk)).sort((a,b)=>a.id.localeCompare(b.id));
+  const list=Object.values(S.scores).filter(s=>S.nights[s.night]&&valid(s.sa,s.sb)&&inSaison(s.night,sk)).sort((a,b)=>a.night.localeCompare(b.night)||a.round-b.round||a.court-b.court||a.m-b.m);
+  const D={}; const d=x=>D[x]=D[x]||{b:{},streak:0,best:0,mates:{},opps:{},hist:[],pts:0,wins:0,l:0,pf:0,pa:0,nset:new Set()};
   const give=(x,k)=>{const o=d(x);o.b[k]=(o.b[k]||0)+1};
   for(const s of list){const m=mi[s.id];if(!m)continue;
-    for(const [me,op,a,b,rm,ro] of [[s.a,s.b,s.sa,s.sb,m.ra,m.rb],[s.b,s.a,s.sb,s.sa,m.rb,m.ra]])for(const x of me){if(!S.players[x])continue;const o=d(x),won=a>b;
+    for(const [me,op,a,b,rm,ro] of [[s.a,s.b,s.sa,s.sb,m.ra,m.rb],[s.b,s.a,s.sb,s.sa,m.rb,m.ra]])for(const x of me){if(!S.players[x])continue;const o=d(x),won=a>b;o.pf+=a;o.pa+=b;o.nset.add(s.night);if(!won)o.l++;
       if(won){o.wins++;if(o.wins===1)give(x,'premiere');o.streak++;if(o.streak===4)give(x,'feu');if(b<10)give(x,'mur');if(ro-rm>=100)give(x,'geant')}else o.streak=0;
       for(const y of me)if(y!==x){const q=o.mates[y]=o.mates[y]||{w:0,n:0};q.n++;if(won)q.w++}
       for(const y of op){const q=o.opps[y]=o.opps[y]||{w:0,n:0};q.n++;if(!won)q.w++}}}
@@ -434,7 +437,7 @@ function deep(){
     const t=trophies(n.id,st);if(t){tro[n.id]=t;for(const y of t){pal[y.who]=pal[y.who]||{ja:0,lb:0,mr:0};pal[y.who][y.k]++;give(y.who,'etoile')}
       for(const p of Object.values(S.pronos))if(p.night===n.id&&S.players[p.player]){const w=Object.fromEntries(t.map(y=>[y.k,y.who]));d(p.player).pts+=['ja','lb','mr'].filter(k=>p[k]&&p[k]===w[k]).length}}}
   for(const x in D){const h=D[x].hist;D[x].best=Math.max(Number(S.players[x]?.seed)||0,...h.map(q=>q.r))}
-  return deep.v=S.ver,deep.r={R,st,mi,D,tro,pal,list,fins};
+  return deep.c[sk]={R,st,mi,D,tro,pal,list,fins};
 }
 function faits(nid){const {mi,st,list}=deep(),L=list.filter(s=>s.night===nid);if(!L.length)return [];
   const out=[];const nm=ids=>ids.map(name).join(' et ');
@@ -462,7 +465,7 @@ function parcours(id){
     for(const [c,ids] of Object.entries(cs))if(ids.includes(id)){const sd=standings(n.id,r,c,ids,R);out.push({d:n.id,c:Number(c),pos:sd.findIndex(x=>x.id===id)+1,src:'app'})}}
   return out.sort((a,b)=>a.d.localeCompare(b.d));
 }
-function vParcours(id){const P=parcours(id);if(!P.length)return '';
+function vParcours(id){const P=parcours(id).filter(p=>inSaison(p.d,skNow()));if(!P.length)return '';
   const W=300,H=110,maxC=Math.max(8,...P.map(p=>p.c)),xs=i=>P.length>1?10+i/(P.length-1)*(W-20):W/2,ys=c=>8+(c-1)/(maxC-1)*(H-16);
   const t1=P.filter(p=>p.c===1).length,best=Math.min(...P.map(p=>p.c)),avg=P.slice(-4).reduce((t,p)=>t+p.c,0)/Math.min(4,P.length);
   const lab=d=>{const [y,m,j]=d.split('-').map(Number);return new Date(y,m-1,j).toLocaleDateString('fr-CA',{day:'numeric',month:'short'})};
@@ -473,8 +476,8 @@ function vParcours(id){const P=parcours(id);if(!P.length)return '';
   <details class="pdet"><summary>Voir chaque soirée</summary><ul class="list">${[...P].reverse().map(p=>`<li><span>${esc(lab(p.d))}</span><span>Terrain ${p.c}, ${p.pos}<sup>${p.pos===1?'er':'e'}</sup>${p.src==='fwango'?' <small class="note">(Fwango)</small>':''}</span></li>`).join('')}</ul></details>
   <p class="note">Avant l'application, seuls le terrain et la position finale de chaque soirée sont connus (données de Fwango). Ils ne comptent pas dans la cote, les trophées ni les badges.</p>`}
 function vFiche(){
-  const {R,D,pal}=deep(), id=ficheId||ls.get('pbme'), all=Object.entries(S.players).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
-  let h=`<div class="row" style="margin-bottom:14px"><label for="ficheSel">Fiche de</label><select id="ficheSel"><option value="">Choisis un joueur</option>${all.map(([x,p])=>`<option value="${esc(x)}"${x===id?' selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`;
+  const {R}=deep(), {D,pal}=deep(skNow()), id=ficheId||ls.get('pbme'), all=Object.entries(S.players).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
+  let h=saisonPicker()+`<div class="row" style="margin-bottom:14px"><label for="ficheSel">Fiche de</label><select id="ficheSel"><option value="">Choisis un joueur</option>${all.map(([x,p])=>`<option value="${esc(x)}"${x===id?' selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`;
   if(!id||!S.players[id])return h+`<p class="note">Choisis un joueur pour voir sa fiche.</p>`;
   const o=D[id]||{b:{},hist:[],mates:{},opps:{},best:Number(S.players[id].seed)||0,pts:0}, r=R[id]||1500, ti=tierOf(r), nx=TIERS[ti+1], t=TIERS[ti];
   const pct=nx?Math.max(0,Math.min(100,(r-t[0])/(nx[0]-t[0])*100)):100;
@@ -491,7 +494,7 @@ function vFiche(){
   if(o.pts)h+=`<p class="note" style="margin-top:12px">Pronostics réussis : ${o.pts} point(s)</p>`;
   return h+`</section>`;
 }
-function vTrophies(nid){const t=deep().tro[nid];
+function vTrophies(nid){const t=deep().tro[nid];if(t&&ls.get('trofx')!==nid){ls.set('trofx',nid);setTimeout(()=>playFx('confetti',9000),500)}
   if(!t)return `<div class="panel"><p class="note">Pas assez de pointages pour remettre les trophées de cette soirée.</p></div>`;
   const f=faits(nid), me=ls.get('pbme'), pr=me&&S.pronos[nid+'__'+me], w=Object.fromEntries(t.map(y=>[y.k,y.who]));
   return `<section class="troph"><h2>Les trophées de la soirée</h2><div class="tgrid">${t.map(x=>`<div class="tcard" style="--tc:${x.col}">${cup(x.col)}<div><div class="tname">${x.name}</div><div class="twho">${esc(name(x.who))}</div><div class="twhat">${x.what}</div><p class="note">${esc(x.why)}</p></div></div>`).join('')}</div>
@@ -599,11 +602,82 @@ function remindPanel(){
   return t+`<p>Reçois un rappel pour confirmer ta présence chaque semaine.</p><button class="go" data-act="pushOn"${me?'':' disabled'}>Activer les rappels</button>${me?'':'<p class="note">Choisis d\'abord ton nom dans « Je suis ».</p>'}</div>`;
 }
 function buildRemind(){
-  const n=nightsSorted().find(x=>x.status==='inscription'); if(!n){toast('Crée d\'abord la soirée');return ''}
+  const n=[...nightsSorted()].reverse().find(x=>x.status==='inscription'); if(!n){toast('Crée d\'abord la soirée');return ''}
   const L=lineup(n.id), miss=Object.entries(S.players).filter(([id,p])=>p.active!==false&&!p.sub_only&&!S.rsvp[n.id+'__'+id]).map(([,p])=>p.name).sort((a,b)=>a.localeCompare(b,'fr'));
   const url=location.origin+location.pathname;
   return `Pickleball ${fmtDate(n.id)} : indique si tu seras présent, absent ou disponible pour remplacer ici ${url} (code de ligue : ${S.league}).\nDéjà ${L.P.length} confirmés${L.Rm.length?` et ${L.Rm.length} remplaçant(s)`:''}.${miss.length?`\nPas encore de réponse : ${miss.join(', ')}.`:''}`;
 }
+
+// ---------- Calendrier des fêtes et animations ----------
+function easterDate(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),da=((h+l-7*m+114)%31)+1;return `${y}-${String(mo).padStart(2,'0')}-${String(da).padStart(2,'0')}`}
+const isoLocal=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const addD=(s,n)=>{const [y,m,j]=s.split('-').map(Number);return isoLocal(new Date(y,m-1,j+n))};
+// Blocs de la ligue (jeudis) : automne 2026 du 10 septembre au 17 décembre, hiver-printemps 2027 du 7 janvier au 10 juin.
+// Les dates inscrites dans Admin > Saison, si présentes, ont priorité.
+const BLOCS=[{first:'2026-09-10',last:'2026-12-17'},{first:'2027-01-07',last:'2027-06-10'}];
+// Saisons pour les statistiques : chaque bloc va jusqu'à la veille du bloc suivant.
+const SAISONS=BLOCS.map((b,i)=>{const y=b.first.slice(0,4),m=Number(b.first.slice(5,7));return{k:b.first,label:(m>=7?'Automne ':'Hiver-printemps ')+y,from:i===0?'0000-01-01':b.first,to:BLOCS[i+1]?addD(BLOCS[i+1].first,-1):'9999-12-31'}});
+const curSaison=()=>{const d=isoLocal(new Date());return (SAISONS.find(s=>d>=s.from&&d<=s.to)||SAISONS[SAISONS.length-1]).k};
+let saisonSel=ls.get('pbsaison')||'';
+const skNow=()=>saisonSel||curSaison();
+const inSaison=(d,k)=>{if(k==='all')return true;const s=SAISONS.find(x=>x.k===k);return !s||(d>=s.from&&d<=s.to)};
+const saisonPicker=()=>`<div class="row" style="margin-bottom:12px"><label for="saisonSel">Saison</label><select id="saisonSel">${SAISONS.map(s=>`<option value="${s.k}"${skNow()===s.k?' selected':''}>${s.label}</option>`).join('')}<option value="all"${skNow()==='all'?' selected':''}>Toutes les saisons</option></select></div>`;
+function blocFor(d){const s=S.season||{};if(s.first||s.last)return s;return BLOCS.find(b=>d<=addD(b.last,3))||{}}
+function festive(now=new Date()){
+  const d=isoLocal(now),md=d.slice(5),y=now.getFullYear(),se=blocFor(d),inR=(a,b)=>d>=a&&d<=b;
+  if(md==='01-01')return{anim:'confetti',txt:'Bonne année de la ligue!'};
+  if(md==='02-14')return{anim:'hearts',txt:'Bonne Saint-Valentin!'};
+  if(md==='03-17')return{anim:'shamrock',txt:'Joyeuse Saint-Patrick!'};
+  if(d===easterDate(y))return{anim:'eggs',txt:'Joyeuses Pâques!'};
+  if(md==='06-24')return{anim:'lys',txt:'Bonne Fête nationale!'};
+  if(md==='07-01')return{anim:'maple',txt:'Bonne Fête du Canada!'};
+  if(md==='10-31')return{anim:'halloween',txt:'Joyeuse Halloween!'};
+  if(md==='12-25')return{anim:'noel',txt:'Joyeux Noël!'};
+  if(md==='12-31')return{anim:'reveillon',txt:'Bonne fin d\'année!'};
+  if(md>='12-15'&&md<='12-30')return{anim:'snow',txt:se.last&&inR(addD(se.last,-6),se.last)?'Dernière soirée avant les Fêtes!':'Joyeuses Fêtes!'};
+  if(se.last&&inR(addD(se.last,1),addD(se.last,3)))return{anim:'confetti',txt:'Merci pour la saison!'};
+  if(se.last&&inR(addD(se.last,-6),se.last))return{anim:null,txt:'Dernière soirée de la saison!'};
+  if(se.first&&inR(addD(se.first,-7),se.first))return{anim:null,txt:'La saison commence!'};
+  for(const [m0,a,t] of [['03-20','petals','Bon printemps!'],['06-21','sun','Bon été!'],['09-22','leaves','Bel automne!'],['12-21','snowlight','Bon hiver!']]){const s=`${y}-${m0}`;if(inR(s,addD(s,6)))return{anim:a,txt:t}}
+  return null;
+}
+const FX={confetti:{g:['rect'],c:['#ff4d2e','#2f7bff','#c6ff2e','#ffc531','#ff3d7f','#3dff8b']},hearts:{g:['heart'],c:['#e63946','#ff7aa2','#ff3d7f']},shamrock:{g:['☘'],c:['#2f9e5b']},eggs:{g:['egg'],c:['#ffd6e7','#c7e9ff','#fff3b0','#d9f7c9','#e7d6ff']},
+  lys:{g:['⚜'],c:['#1d5eb5','#ffffff']},maple:{g:['🍁'],c:['#e63946']},halloween:{g:['🎃','🦇'],c:['#ff8c1a']},noel:{g:['snow','⭐'],c:['#ffffff','#cfe3ff']},reveillon:{g:['snow','rect'],c:['#ffffff','#ffc531','#ff4d2e','#2f7bff']},
+  snow:{g:['snow'],c:['#ffffff','#dbe9ff']},snowlight:{g:['snow'],c:['#ffffff','#dbe9ff'],n:22},petals:{g:['petal'],c:['#ffc0d6','#ffd9e6','#ffffff']},sun:{g:['glow'],c:['#ffe27a','#ffd23f'],up:true,n:20},leaves:{g:['🍂','🍁'],c:['#c0602b']}};
+let fxRun=0;
+function playFx(kind,ms=14000){
+  if(!kind||!FX[kind])return; try{if(matchMedia('(prefers-reduced-motion: reduce)').matches)return}catch(e){}
+  const cfg=FX[kind],run=++fxRun;let cv=$('fx');if(!cv){cv=document.createElement('canvas');cv.id='fx';cv.setAttribute('aria-hidden','true');document.body.appendChild(cv)}
+  const ctx=cv.getContext('2d'),dpr=Math.min(2,window.devicePixelRatio||1),W=innerWidth,H=innerHeight;cv.width=W*dpr;cv.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+  const N=cfg.n||(W<600?28:45),rnd=(a,b)=>a+Math.random()*(b-a),P=Array.from({length:N},()=>({x:rnd(0,W),y:cfg.up?rnd(H*0.3,H+80):rnd(-H,-10),s:rnd(10,22),vy:cfg.up?-rnd(15,35):rnd(40,95),vx:rnd(-20,20),r:rnd(0,6.28),vr:rnd(-2,2),g:cfg.g[Math.floor(Math.random()*cfg.g.length)],c:cfg.c[Math.floor(Math.random()*cfg.c.length)],ph:rnd(0,6.28)}));
+  const t0=performance.now();let last=t0;
+  function heart(x,y,s){ctx.beginPath();ctx.moveTo(x,y+s*.3);ctx.bezierCurveTo(x,y,x-s*.5,y,x-s*.5,y+s*.3);ctx.bezierCurveTo(x-s*.5,y+s*.6,x,y+s*.8,x,y+s);ctx.bezierCurveTo(x,y+s*.8,x+s*.5,y+s*.6,x+s*.5,y+s*.3);ctx.bezierCurveTo(x+s*.5,y,x,y,x,y+s*.3);ctx.fill()}
+  function frame(t){if(run!==fxRun)return;const dt=Math.min(.05,(t-last)/1000);last=t;const el=t-t0,alpha=el>ms-2500?Math.max(0,(ms-el)/2500):1;
+    ctx.clearRect(0,0,W,H);ctx.globalAlpha=alpha;
+    for(const p of P){p.y+=p.vy*dt;p.x+=(p.vx+Math.sin(t/700+p.ph)*18)*dt;p.r+=p.vr*dt;
+      if(!cfg.up&&p.y>H+30&&el<ms-3000){p.y=-20;p.x=rnd(0,W)} if(cfg.up&&p.y<-30&&el<ms-3000){p.y=H+20;p.x=rnd(0,W)}
+      ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.r);ctx.fillStyle=p.c;
+      if(p.g==='rect')ctx.fillRect(-p.s/2,-p.s/4,p.s,p.s/2);
+      else if(p.g==='snow'){ctx.beginPath();ctx.arc(0,0,p.s/5,0,6.28);ctx.fill();ctx.strokeStyle='rgba(120,150,200,.35)';ctx.stroke()}
+      else if(p.g==='heart')heart(0,-p.s/2,p.s);
+      else if(p.g==='egg'){ctx.beginPath();ctx.ellipse(0,0,p.s/3,p.s/2.3,0,0,6.28);ctx.fill();ctx.strokeStyle='rgba(0,0,0,.15)';ctx.stroke()}
+      else if(p.g==='petal'){ctx.beginPath();ctx.ellipse(0,0,p.s/2.6,p.s/5,0,0,6.28);ctx.fill()}
+      else if(p.g==='glow'){const gr=ctx.createRadialGradient(0,0,0,0,0,p.s);gr.addColorStop(0,'rgba(255,226,122,.7)');gr.addColorStop(1,'rgba(255,226,122,0)');ctx.fillStyle=gr;ctx.beginPath();ctx.arc(0,0,p.s,0,6.28);ctx.fill()}
+      else{ctx.font=`${p.s+6}px sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';if(p.g==='⚜'){ctx.strokeStyle='#1d5eb5';ctx.lineWidth=1}ctx.fillText(p.g,0,0)}
+      ctx.restore()}
+    if(el<ms)requestAnimationFrame(frame);else ctx.clearRect(0,0,W,H)}
+  requestAnimationFrame(frame);
+}
+let fxShown='';
+function seasonalOnce(){const f=festive(),b=$('fete');if(!f){b.hidden=true;return}b.textContent=f.txt;b.hidden=false;
+  const key=isoLocal(new Date())+'|'+f.txt;if(f.anim&&fxShown!==key){fxShown=key;setTimeout(()=>playFx(f.anim),600)}}
+// Palier : célébration à l'écran quand mon palier monte
+function tierCheck(){const me=ls.get('pbme');if(!me||!S.players[me])return;const {R}=deep(),ti=tierOf(R[me]||0),prev=ls.get('pbtier:'+me);
+  ls.set('pbtier:'+me,String(ti));if(prev!=null&&ti>Number(prev)){setTimeout(()=>{playFx('confetti',9000);toast(`Bravo, tu passes au palier ${TIERS[ti][1]}!`)},800)}}
+async function tierPushes(nid){const {R,st}=deep();let n=0;
+  for(const x of Object.keys(S.players)){const pre=st[x]?.pre?.[nid];if(pre==null)continue;const adj=Number(S.players[x].adj)||0,a=tierOf(pre+adj),b=tierOf(R[x]);
+    if(b>a&&S.push.includes(x)){try{await fetch(`${SUPABASE_URL}/functions/v1/rappels`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code,type:'perso',player:x,title:'Nouveau palier!',body:`Bravo, tu passes au palier ${TIERS[b][1]}! Va voir ta fiche.`})});n++}catch(e){}}}
+  if(n)toast(`${n} joueur(s) avisé(s) de leur nouveau palier`)}
 
 // ---------- Vues ----------
 function vLogin(){return `<div class="panel" style="max-width:460px"><h2>Entrer dans la ligue</h2><p>Entre le code de ligue que l'organisateur t'a donné.</p><form id="login" class="row"><input id="codeIn" autocomplete="off" autocapitalize="characters" aria-label="Code de ligue" style="flex:1"><button class="go">Entrer</button></form></div>`}
@@ -613,7 +687,10 @@ function whoBar(){
 }
 function vSoiree(){
   const ns=nightsSorted(); if(!ns.length)return `<p class="hero">Aucune soirée</p><p>${S.admin?'Crée la première soirée dans l\'onglet Admin.':'L\'organisateur n\'a pas encore créé de soirée.'}</p>`;
-  const n=S.nights[curNight]||ns[0]; curNight=n.id;
+  // Soirée affichée par défaut : celle en cours; sinon la dernière terminée pendant 3 jours (trophées); sinon la prochaine.
+  const live=ns.find(x=>x.status==='r1'||x.status==='r2'), done=ns.find(x=>x.status==='fini'), next=[...ns].reverse().find(x=>x.status==='inscription');
+  const pick=live||(done&&isoLocal(new Date())<=addD(done.id,3)?done:null)||next||ns[0];
+  const n=S.nights[curNight]||pick; curNight=n.id;
   const {R}=compute(); let h=whoBar()+`<div class="bar"><select id="nightSel" aria-label="Soirée">${ns.map(x=>`<option value="${esc(x.id)}"${x.id===n.id?' selected':''}>${esc(fmtDate(x.id))}</option>`).join('')}</select>`;
   const lab={inscription:'Inscriptions ouvertes',r1:'Ronde 1 en cours',r2:'Ronde 2 en cours',fini:'Soirée terminée'}[n.status];
   h+=`<span class="pill${n.status==='r1'||n.status==='r2'?' live':''}">${lab}</span></div>`;
@@ -658,7 +735,7 @@ function vSoiree(){
   return h;
 }
 function vPresences(){
-  const n=nightsSorted().find(x=>x.status==='inscription');
+  const n=[...nightsSorted()].reverse().find(x=>x.status==='inscription');
   if(!n)return `<p class="hero">Pas d'inscription ouverte</p><p class="note">Les présences ouvrent quand l'organisateur crée la prochaine soirée.</p>`+whoBar()+remindPanel();
   const act=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
   const mine=ls.get('pbme'), L=lineup(n.id), st=mine&&S.rsvp[n.id+'__'+mine]?.status;
@@ -680,10 +757,10 @@ function vPresences(){
   return h;
 }
 function vClassement(){
-  const {R,st,pal,D}=deep(), rows=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>R[b[0]]-R[a[0]]);
+  const {R,st}=deep(), {pal,D}=deep(skNow()), E={wins:0,l:0,pf:0,pa:0,nset:new Set()}, rows=Object.entries(S.players).filter(([,p])=>p.active!==false).sort((a,b)=>R[b[0]]-R[a[0]]);
   const tro=id=>{const c=pal[id];return c?TROPH.filter(t=>c[t.k]).map(t=>`<span class="tb" style="--tc:${t.col}" title="${t.name}">${c[t.k]}&nbsp;${t.name.replace(/^Le /,'').split(/[ -]/).pop()}</span>`).join(' '):''};
   if(!rows.length)return `<p class="hero">Aucun joueur</p><p class="note">La liste des joueurs sera chargée par l'organisateur.</p>`;
-  return `<p class="note">Cote Elo : une victoire contre plus fort rapporte plus, et un gros écart ajoute un bonus. La cote change une fois par soirée, d'après les cotes du début de soirée, donc l'ordre des matchs n'a aucun effet. Un nouveau joueur, ajouté en cours de saison, bouge plus vite pendant ses 12 premiers matchs pour trouver son niveau. Une absence ne change pas la cote.</p><table class="stack"><thead><tr><th>#</th><th>Joueur</th><th class="r">Cote</th><th class="r">Dernière soirée</th><th class="r">V-D</th><th class="r">Diff.</th><th class="r">Soirées</th><th>Trophées</th></tr></thead><tbody>${rows.map(([id,p],i)=>{const t=st[id],d=Math.round(t.last),df=t.pf-t.pa;return `<tr${id===ls.get('pbme')?' class="meRow"':''}><td>${i+1}</td><td><button class="lnk" data-act="fiche" data-p="${esc(id)}">${esc(p.name)}</button> ${tierTag(R[id])}${p.sub_only?' <span class="tier" style="--tc:#c9ced6">Remplaçant</span>':''}</td><td class="r big">${Math.round(R[id])}</td><td class="r ${d>0?'plus':d<0?'minus':''}">${t.lastNight?(d>0?'+':'')+d:''}</td><td class="r">${t.w}-${t.l}</td><td class="r">${df>0?'+':''}${df}</td><td class="r">${t.nights.size}</td><td>${tro(id)}</td></tr>`}).join('')}</tbody></table>${(()=>{const pr=Object.entries(D).filter(([x,o])=>o.pts&&S.players[x]).sort((a,b)=>b[1].pts-a[1].pts).slice(0,5);return pr.length?`<h2 style="margin-top:24px">Meilleurs pronostiqueurs</h2><ol class="list">${pr.map(([x,o])=>`<li><span>${esc(name(x))}</span><span class="pill">${o.pts} pt${o.pts>1?'s':''}</span></li>`).join('')}</ol>`:''})()}`;
+  return saisonPicker()+`<p class="note">Cote Elo : une victoire contre plus fort rapporte plus, et un gros écart ajoute un bonus. La cote change une fois par soirée, d'après les cotes du début de soirée, donc l'ordre des matchs n'a aucun effet. Un nouveau joueur, ajouté en cours de saison, bouge plus vite pendant ses 12 premiers matchs pour trouver son niveau. Une absence ne change pas la cote.</p><table class="stack"><thead><tr><th>#</th><th>Joueur</th><th class="r">Cote</th><th class="r">Dernière soirée</th><th class="r">V-D</th><th class="r">Diff.</th><th class="r">Soirées</th><th>Trophées</th></tr></thead><tbody>${rows.map(([id,p],i)=>{const t=st[id],z=D[id]||E,d=Math.round(t.last),df=z.pf-z.pa;return `<tr${id===ls.get('pbme')?' class="meRow"':''}><td>${i+1}</td><td><button class="lnk" data-act="fiche" data-p="${esc(id)}">${esc(p.name)}</button> ${tierTag(R[id])}${p.sub_only?' <span class="tier" style="--tc:#c9ced6">Remplaçant</span>':''}</td><td class="r big">${Math.round(R[id])}</td><td class="r ${d>0?'plus':d<0?'minus':''}">${t.lastNight?(d>0?'+':'')+d:''}</td><td class="r">${z.wins}-${z.l}</td><td class="r">${df>0?'+':''}${df}</td><td class="r">${z.nset.size}</td><td>${tro(id)}</td></tr>`}).join('')}</tbody></table>${(()=>{const pr=Object.entries(D).filter(([x,o])=>o.pts&&S.players[x]).sort((a,b)=>b[1].pts-a[1].pts).slice(0,5);return pr.length?`<h2 style="margin-top:24px">Meilleurs pronostiqueurs</h2><ol class="list">${pr.map(([x,o])=>`<li><span>${esc(name(x))}</span><span class="pill">${o.pts} pt${o.pts>1?'s':''}</span></li>`).join('')}</ol>`:''})()}`;
 }
 function vAdmin(){
   if(!S.admin)return `<p>Section réservée à l'organisateur.</p>`;
@@ -691,6 +768,7 @@ function vAdmin(){
   const low=ps.filter(([,p])=>p.active!==false).reduce((m,[id])=>Math.min(m,R[id]),Infinity);
   return `<div class="panel"><h2>Soirées</h2><div class="row"><input type="date" id="newDate" value="${nextThursday()}" aria-label="Date"><button class="go" data-act="newNight">Créer la soirée</button></div>
   <ul class="list" style="margin-top:10px">${ns.map(n=>`<li><span>${esc(fmtDate(n.id))}</span><span class="row"><select data-act="status" data-n="${esc(n.id)}" aria-label="Statut">${['inscription','r1','r2','fini'].map(s=>`<option value="${s}"${n.status===s?' selected':''}>${{inscription:'Inscription',r1:'Ronde 1',r2:'Ronde 2',fini:'Terminée'}[s]}</option>`).join('')}</select><button class="warn" data-act="delNight" data-n="${esc(n.id)}">Supprimer</button></span></li>`).join('')}</ul></div>
+  <div class="panel"><h2>Saison</h2><div class="row"><label for="sFirst">Première soirée</label><input type="date" id="sFirst" value="${esc(S.season?.first||'')}"><label for="sLast">Dernière soirée</label><input type="date" id="sLast" value="${esc(S.season?.last||'')}"><button class="go" data-act="saveSeason">Enregistrer</button></div><p class="note">Facultatif : laisse vide pour utiliser le calendrier des blocs déjà programmé (automne 2026 : 10 septembre au 17 décembre; hiver-printemps 2027 : 7 janvier au 10 juin). Sert aux messages de début et de fin de saison.</p></div>
   <div class="panel"><h2>Rappels</h2><p>${S.push.length} joueur(s) ont activé les rappels sur leur téléphone${S.push.length?': '+S.push.map(id=>esc(name(id))).join(', '):''}.</p><p class="note">Envoi automatique le mardi vers 18 h et le jeudi vers midi, seulement à ceux qui n'ont pas confirmé.</p>
   <div class="row"><button class="go" data-act="remindMsg">Préparer le message Messenger</button><button data-act="remindNow">Envoyer le rappel maintenant</button><button data-act="remindTest">M'envoyer un test</button></div>
   ${remindMsg?`<textarea id="remindTxt" style="margin-top:10px">${esc(remindMsg)}</textarea><button data-act="remindCopy">Copier</button>`:''}</div>
@@ -717,6 +795,7 @@ document.addEventListener('change',async e=>{const t=e.target;
   if(t.id==='nightSel'){curNight=t.value;curRound=null;swapMode=false;render()}
   if(t.id==='meSel'){ls.set('pbme',t.value||null);render()}
   if(t.id==='ficheSel'){ficheId=t.value||null;render()}
+  if(t.id==='saisonSel'){saisonSel=t.value;ls.set('pbsaison',t.value);render()}
   if(t.id==='inSel'){inPick=t.value;swapSel=null;render()}
   if(t.dataset.so){await act('admin_set_sub_only',{p_id:t.dataset.so,p_flag:t.checked},t.checked?'Remplaçant seulement':'Joueur actif régulier')}
   if(t.dataset.act==='status'){const n=S.nights[t.dataset.n];if(n)await saveNight({...n,status:t.value},'Statut changé')}
@@ -748,9 +827,10 @@ document.addEventListener('click',async e=>{
   if(a==='sv'){const r=Number(b.dataset.r),c=b.dataset.c,m=Number(b.dataset.m),[ta,tb]=pairs(n['r'+r][c])[m-1];await saveScore(n,r,c,m,ta,tb)}
   if(a==='ed'){drafts[b.dataset.k]={...(drafts[b.dataset.k]||{}),open:true};render()}
   if(a==='r2'&&await ask('Passer à la ronde 2? Le 1er de chaque terrain monte, le 4e descend.'))await toRound2(n);
-  if(a==='fin'&&await ask('Terminer la soirée? Les cotes et les trophées seront calculés.')){await act('advance',{p_night:n.id,p_status:'fini',p_r2:{}},'Soirée terminée');if(S.admin&&S.nights[n.id]?.status==='fini')await announce(n.id)}
+  if(a==='fin'&&await ask('Terminer la soirée? Les cotes et les trophées seront calculés.')){await act('advance',{p_night:n.id,p_status:'fini',p_r2:{}},'Soirée terminée');if(S.admin&&S.nights[n.id]?.status==='fini'){await announce(n.id);await tierPushes(n.id)}}
   if(a==='annTroph'&&await ask('Envoyer une notification à tous avec les gagnants des trophées?'))await announce(b.dataset.n);
   if(a==='deco'){setDeco(b.dataset.d);return}
+  if(a==='saveSeason'){await act('admin_set_season',{p_first:$('sFirst').value,p_last:$('sLast').value},'Dates de saison enregistrées');return}
   if(a==='fixNight'){const o=$('fixOut').value,w=$('fixIn').value;if(!o||!w){toast('Choisis les deux joueurs');return}
     if(!await ask(`Attribuer à ${name(w)} toute la soirée de ${name(o)} (terrains et pointages)? ${name(o)} sera marqué absent.`))return;
     await act('admin_replace_in_night',{p_night:b.dataset.n,p_old:o,p_new:w},'Soirée corrigée');return}
@@ -760,7 +840,7 @@ document.addEventListener('click',async e=>{
   if(a==='confSub'){const p=b.dataset.p;if(!await ask(`Confirmer la place de ${name(p)}? Une notification lui sera envoyée.`))return;
     if(busy)return;busy=true;let ok=false;try{await rpc('confirm_sub',{p_code:code,p_night:b.dataset.n,p_player:p});ok=true}catch(e){toast(e.message)}finally{busy=false}
     if(ok){const sent=await callReminders('remplacant',p);toast(sent?`Place confirmée, ${name(p)} a été avisé(e)`:`Place confirmée. ${name(p)} n'a pas activé les rappels : avise-le par Messenger.`);await load()}}
-  if(a==='pres'||a==='cyc'){const ni=nightsSorted().find(x=>x.status==='inscription');if(!ni)return;const cur=S.rsvp[ni.id+'__'+b.dataset.p]?.status||'';
+  if(a==='pres'||a==='cyc'){const ni=[...nightsSorted()].reverse().find(x=>x.status==='inscription');if(!ni)return;const cur=S.rsvp[ni.id+'__'+b.dataset.p]?.status||'';
     const s=a==='pres'?b.dataset.s:(S.players[b.dataset.p]?.sub_only?{'':'remplacant',present:'absent',remplacant:'absent',absent:''}:{'':'present',present:'remplacant',remplacant:'absent',absent:''})[cur];if(a==='pres'&&s===cur)return;
     await act('set_presence',{p_night:ni.id,p_player:b.dataset.p,p_status:s||null},s?presLabel(s)+' : réponse enregistrée':'Réponse effacée')}
   if(a==='newNight'){const d=$('newDate').value;if(!d)return;if(S.nights[d]){toast('Cette soirée existe déjà');return}curNight=d;await saveNight({id:d,status:'inscription',r1:{},r2:{},wait:[],courts:0},'Soirée créée')}
