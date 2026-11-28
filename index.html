@@ -287,6 +287,7 @@ body[data-deco=epure] .spark{color:var(--acc)}
     <a href="#presences" data-v="presences">Présences</a>
     <a href="#classement" data-v="classement">Classement</a>
     <a href="#fiche" data-v="fiche">Ma fiche</a>
+    <a href="#ligue" data-v="ligue">La ligue</a>
     <a href="#admin" data-v="admin" id="navAdmin" hidden>Admin</a>
   </nav>
 </header>
@@ -327,7 +328,7 @@ async function load(){
   if(!code)return;
   try{
     lastLoad=Date.now(); const st=await rpc('get_state',{p_code:code});
-    S.admin=!!st.admin; S.league=st.league_code||''; S.push=st.push_players||[]; S.season=st.season||{};
+    S.admin=!!st.admin; S.league=st.league_code||''; S.push=st.push_players||[]; S.season=st.season||{}; S.rules=st.rules||''; S.comments=st.comments||[];
     S.players=Object.fromEntries(st.players.map(p=>[p.id,p]));
     S.nights=Object.fromEntries(st.nights.map(n=>[n.id,n]));
     S.rsvp=Object.fromEntries(st.rsvp.map(r=>[r.night+'__'+r.player,r]));
@@ -762,11 +763,53 @@ function vClassement(){
   if(!rows.length)return `<p class="hero">Aucun joueur</p><p class="note">La liste des joueurs sera chargée par l'organisateur.</p>`;
   return saisonPicker()+`<p class="note">Cote Elo : une victoire contre plus fort rapporte plus, et un gros écart ajoute un bonus. La cote change une fois par soirée, d'après les cotes du début de soirée, donc l'ordre des matchs n'a aucun effet. Un nouveau joueur, ajouté en cours de saison, bouge plus vite pendant ses 12 premiers matchs pour trouver son niveau. Une absence ne change pas la cote.</p><table class="stack"><thead><tr><th>#</th><th>Joueur</th><th class="r">Cote</th><th class="r">Dernière soirée</th><th class="r">V-D</th><th class="r">Diff.</th><th class="r">Soirées</th><th>Trophées</th></tr></thead><tbody>${rows.map(([id,p],i)=>{const t=st[id],z=D[id]||E,d=Math.round(t.last),df=z.pf-z.pa;return `<tr${id===ls.get('pbme')?' class="meRow"':''}><td>${i+1}</td><td><button class="lnk" data-act="fiche" data-p="${esc(id)}">${esc(p.name)}</button> ${tierTag(R[id])}${p.sub_only?' <span class="tier" style="--tc:#c9ced6">Remplaçant</span>':''}</td><td class="r big">${Math.round(R[id])}</td><td class="r ${d>0?'plus':d<0?'minus':''}">${t.lastNight?(d>0?'+':'')+d:''}</td><td class="r">${z.wins}-${z.l}</td><td class="r">${df>0?'+':''}${df}</td><td class="r">${z.nset.size}</td><td>${tro(id)}</td></tr>`}).join('')}</tbody></table>${(()=>{const pr=Object.entries(D).filter(([x,o])=>o.pts&&S.players[x]).sort((a,b)=>b[1].pts-a[1].pts).slice(0,5);return pr.length?`<h2 style="margin-top:24px">Meilleurs pronostiqueurs</h2><ol class="list">${pr.map(([x,o])=>`<li><span>${esc(name(x))}</span><span class="pill">${o.pts} pt${o.pts>1?'s':''}</span></li>`).join('')}</ol>`:''})()}`;
 }
+const RULES_DEFAUT=`## Les soirées
+La ligue joue le jeudi soir, en double, sur un maximum de 8 terrains. Les soirées sont créées automatiquement pendant la saison.
+
+## Confirmer sa présence
+Dans l'onglet Présences, choisis « Je serai là », « Disponible pour remplacer » ou « Je serai absent(e) ». Les places sont attribuées par groupes de 4, dans l'ordre des confirmations. Un remplaçant joue seulement quand un administrateur confirme sa place; il reçoit alors une notification.
+Un rappel est envoyé le mardi soir et le jeudi midi à ceux qui n'ont pas répondu.
+
+## Former les terrains
+Avant le premier match, les joueurs présents sont placés selon leur cote : les 4 meilleures cotes au terrain 1, les 4 suivantes au terrain 2, et ainsi de suite.
+
+## Une ronde
+Chaque terrain réunit 4 joueurs qui jouent 3 matchs, en changeant de partenaire à chaque match. Le premier à 21 gagne, sans obligation d'écart de 2. N'importe quel joueur peut entrer le pointage.
+Le classement du terrain se fait par victoires, puis par différentiel de points, puis par cote.
+
+## Monter et descendre
+Après la ronde 1, le 1er de chaque terrain monte d'un terrain et le 4e descend. La ronde 2 se joue avec ces nouveaux groupes.
+
+## La cote
+Chaque joueur a une cote Elo. Gagner contre plus fort rapporte plus, et un gros écart de points ajoute un bonus. La cote change une fois par soirée. Une absence ne change pas la cote.
+
+## Trophées et badges
+À la fin de chaque soirée, trois trophées sont remis à trois joueurs différents : le Maurice-Richard, le Jack Adams et le Lady Byng. Les badges et les paliers se trouvent dans Ma fiche.
+
+## Une question, une idée?
+Écris aux administrateurs avec le formulaire au bas de cette page.`;
+let rulesEdit=false;
+function fmtRules(t){return t.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>l.startsWith('## ')?`<h2>${esc(l.slice(3))}</h2>`:l.startsWith('- ')?`<p>• ${esc(l.slice(2))}</p>`:`<p>${esc(l)}</p>`).join('')}
+function vLigue(){
+  const txt=S.rules||RULES_DEFAUT, me=ls.get('pbme')||'', all=Object.entries(S.players).sort((a,b)=>a[1].name.localeCompare(b[1].name,'fr'));
+  const regles=rulesEdit&&S.admin?`<textarea id="rulesTxt" style="min-height:420px">${esc(txt)}</textarea><p class="note">Une ligne qui commence par « ## » devient un titre. Une ligne qui commence par « - » devient un point de liste.</p><div class="row"><button class="go" data-act="rulesSave">Enregistrer</button><button data-act="rulesCancel">Annuler</button>${S.rules?'<button class="warn" data-act="rulesReset">Revenir au texte d&#39;origine</button>':''}</div>`
+    :fmtRules(txt)+(S.admin?`<div class="row" style="margin-top:12px"><button data-act="rulesEdit">Modifier ce texte</button></div>`:'');
+  return `<div class="panel"><h1 style="margin-top:0">Fonctionnement de la ligue</h1>${regles}</div>
+  <div class="panel"><h2>Écrire aux administrateurs</h2><p class="note">Une question, une suggestion, un problème avec un pointage? Seuls les administrateurs lisent ces messages.</p>
+  <div class="row"><label for="comWho">Ton nom</label><select id="comWho"><option value="">Choisis ton nom</option>${all.map(([id,p])=>`<option value="${esc(id)}"${id===me?' selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+  <textarea id="comTxt" maxlength="1000" placeholder="Ton commentaire" style="margin-top:10px"></textarea>
+  <button class="go" data-act="comSend" style="margin-top:10px">Envoyer</button></div>`;
+}
+function comPanel(){
+  const C=S.comments||[], u=C.filter(c=>!c.lu).length;
+  const when=c=>new Date(c.created).toLocaleString('fr-CA',{day:'numeric',month:'long',hour:'numeric',minute:'2-digit'});
+  return `<div class="panel"><h2>Commentaires des joueurs${u?` (${u} non lu${u>1?'s':''})`:''}</h2>${C.length?`<ul class="list">${C.map(c=>`<li style="display:block${c.lu?';opacity:.65':''}"><p style="margin:0 0 4px"><strong>${c.player?esc(name(c.player)):'Sans nom'}</strong> <span class="note">${esc(when(c))}</span>${c.lu?'':' <span class="pill">Nouveau</span>'}</p><p style="margin:0 0 8px;white-space:pre-wrap">${esc(c.body)}</p><div class="row"><button data-act="com" data-c="${c.id}" data-do="${c.lu?'nonlu':'lu'}">${c.lu?'Marquer non lu':'Marquer lu'}</button><button class="warn" data-act="com" data-c="${c.id}" data-do="supprimer">Supprimer</button></div></li>`).join('')}</ul>`:'<p class="note">Aucun commentaire pour l\'instant.</p>'}</div>`;
+}
 function vAdmin(){
   if(!S.admin)return `<p>Section réservée à l'organisateur.</p>`;
   const {R}=compute(), ps=Object.entries(S.players).sort((a,b)=>R[b[0]]-R[a[0]]), ns=nightsSorted();
   const low=ps.filter(([,p])=>p.active!==false).reduce((m,[id])=>Math.min(m,R[id]),Infinity);
-  return `<div class="panel"><h2>Soirées</h2><div class="row"><input type="date" id="newDate" value="${nextThursday()}" aria-label="Date"><button class="go" data-act="newNight">Créer la soirée</button></div>
+  return comPanel()+`<div class="panel"><h2>Soirées</h2><div class="row"><input type="date" id="newDate" value="${nextThursday()}" aria-label="Date"><button class="go" data-act="newNight">Créer la soirée</button></div>
   <ul class="list" style="margin-top:10px">${ns.map(n=>`<li><span>${esc(fmtDate(n.id))}</span><span class="row"><select data-act="status" data-n="${esc(n.id)}" aria-label="Statut">${['inscription','r1','r2','fini'].map(s=>`<option value="${s}"${n.status===s?' selected':''}>${{inscription:'Inscription',r1:'Ronde 1',r2:'Ronde 2',fini:'Terminée'}[s]}</option>`).join('')}</select><button class="warn" data-act="delNight" data-n="${esc(n.id)}">Supprimer</button></span></li>`).join('')}</ul></div>
   <div class="panel"><h2>Saison</h2><div class="row"><label for="sFirst">Première soirée</label><input type="date" id="sFirst" value="${esc(S.season?.first||'')}"><label for="sLast">Dernière soirée</label><input type="date" id="sLast" value="${esc(S.season?.last||'')}"><button class="go" data-act="saveSeason">Enregistrer</button></div><p class="note">Facultatif : laisse vide pour utiliser le calendrier des blocs déjà programmé (automne 2026 : 10 septembre au 17 décembre; hiver-printemps 2027 : 7 janvier au 10 juin). Sert aux messages de début et de fin de saison.</p></div>
   <div class="panel"><h2>Rappels</h2><p>${S.push.length} joueur(s) ont activé les rappels sur leur téléphone${S.push.length?': '+S.push.map(id=>esc(name(id))).join(', '):''}.</p><p class="note">Envoi automatique le mardi vers 18 h et le jeudi vers midi, seulement à ceux qui n'ont pas confirmé.</p>
@@ -780,11 +823,11 @@ function vAdmin(){
 function render(){
   const f=document.activeElement, fid=f&&f.id, sel=f&&f.selectionStart;
   for(const a of document.querySelectorAll('nav a'))a.classList.toggle('on',a.dataset.v===view);
-  $('navAdmin').hidden=!S.admin; $('nav').hidden=!code; $('logout').hidden=!code;
+  $('navAdmin').hidden=!S.admin; {const u=(S.comments||[]).filter(c=>!c.lu).length;$('navAdmin').textContent=u?`Admin (${u})`:'Admin'} $('nav').hidden=!code; $('logout').hidden=!code;
   const n=nightsSorted()[0]; $('sub').textContent=code&&n?`Dernière soirée: ${fmtDate(n.id)}`:'8 terrains, montée et descente, cote Elo';
   if(!code){$('app').innerHTML=vLogin();return}
   if(!S.ready){$('app').innerHTML='<p class="note">Chargement de la ligue…</p>';return}
-  $('app').innerHTML={soiree:vSoiree,presences:vPresences,classement:vClassement,fiche:vFiche,admin:vAdmin}[view]();
+  $('app').innerHTML={soiree:vSoiree,presences:vPresences,classement:vClassement,fiche:vFiche,ligue:vLigue,admin:vAdmin}[view]();
   if(fid&&$(fid)){const e=$(fid);e.focus();try{e.setSelectionRange(sel,sel)}catch(x){}}
 }
 
@@ -834,6 +877,14 @@ document.addEventListener('click',async e=>{
   if(a==='fixNight'){const o=$('fixOut').value,w=$('fixIn').value;if(!o||!w){toast('Choisis les deux joueurs');return}
     if(!await ask(`Attribuer à ${name(w)} toute la soirée de ${name(o)} (terrains et pointages)? ${name(o)} sera marqué absent.`))return;
     await act('admin_replace_in_night',{p_night:b.dataset.n,p_old:o,p_new:w},'Soirée corrigée');return}
+  if(a==='rulesEdit'){rulesEdit=true;render();return}
+  if(a==='rulesCancel'){rulesEdit=false;render();return}
+  if(a==='rulesSave'){rulesEdit=false;await act('admin_set_rules',{p_rules:$('rulesTxt').value},'Texte enregistré');return}
+  if(a==='rulesReset'&&await ask('Revenir au texte d\'origine? Tes modifications seront effacées.')){rulesEdit=false;await act('admin_set_rules',{p_rules:''},'Texte d\'origine rétabli');return}
+  if(a==='comSend'){const t=$('comTxt').value.trim();if(!$('comWho').value){toast('Choisis ton nom avant d\'envoyer');return}if(!t){toast('Écris ton commentaire avant de l\'envoyer');return}
+    if(busy)return;busy=true;try{await rpc('send_comment',{p_code:code,p_player:$('comWho').value,p_body:t});$('comTxt').value='';toast('Merci! Ton commentaire a été envoyé aux administrateurs.')}catch(x){toast(x.message)}finally{busy=false}
+    if(S.admin)await load();return}
+  if(a==='com'){if(b.dataset.do==='supprimer'&&!await ask('Supprimer ce commentaire?'))return;await act('admin_comment',{p_id:Number(b.dataset.c),p_action:b.dataset.do},b.dataset.do==='supprimer'?'Commentaire supprimé':'');return}
   if(a==='fiche'){ficheId=b.dataset.p;location.hash='#fiche';return}
   if(a==='prono'){const v=k=>$('pr-'+k).value||null;await act('set_prono',{p_night:b.dataset.n,p_player:b.dataset.p,p_ja:v('ja'),p_lb:v('lb'),p_mr:v('mr')},'Pronostics enregistrés');return}
   if(a==='copyRecap'){const t=messengerRecap(b.dataset.n);try{await navigator.clipboard.writeText(t);toast('Résumé copié, colle-le dans Messenger')}catch(x){remindMsg=t;toast('Copie impossible ici: le texte est dans Admin > Rappels')}return}
@@ -858,7 +909,7 @@ document.addEventListener('click',async e=>{
       toast('Joueurs chargés')}catch(err){toast(err.message)}finally{busy=false}await load()}
   if(a==='delP'&&await ask(`Retirer ${name(b.dataset.id)} de la ligue? Ses pointages passés seront ignorés dans les cotes.`))await act('admin_delete_player',{p_id:b.dataset.id},'Joueur retiré');
 });
-function route(){const h=location.hash.slice(1);view=['soiree','presences','classement','fiche','admin'].includes(h)?h:'soiree';render()}
+function route(){const h=location.hash.slice(1);view=['soiree','presences','classement','fiche','ligue','admin'].includes(h)?h:'soiree';render()}
 addEventListener('hashchange',()=>{route();if(Date.now()-lastLoad>30000)load()});
 // Rafraîchit toutes les 8 secondes, sauf pendant qu'on tape un pointage.
 // Rafraîchissement automatique économe (un match dure de 10 à 15 minutes) :
